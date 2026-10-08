@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import inspect
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from astrbot_plugin_channel_media_tools.integration import RunnerIntegration
+
+from .conftest import image_count, picture, request
+
+
+def owner(service):
+    return SimpleNamespace(
+        policy=service.policy,
+        channels=service.channels,
+        settings=service.settings,
+        enabled_for_runner=lambda r: (
+            service.settings.for_event(r.run_context.context.event).mode != "off"
+        ),
+        enabled_event=lambda e: service.settings.for_event(e).mode != "off",
+    )
+
+
+async def test_step_guard_covers_multiple_tools_and_final_history(service):
+    class Runner:
+        def __init__(self):
+            self.req = request()
+            self.run_context = SimpleNamespace(
+                context=SimpleNamespace(event=service.event),
+                messages=[{"role": "user", "content": [picture("historical")]}],
+            )
+            self.calls = []
+            self.finished = False
+
+        def _sanitize_contexts_for_provider(self, messages):
+            return messages
+
+        def done(self):
+            return self.finished
+
+        async def step(self):
+            self.calls.append(
+                self._sanitize_contexts_for_provider(self.run_context.messages)
+            )
+            yield "response"
+            if len(self.calls) == 1:
+                self.run_context.messages.append(
+                    {"role": "user", "content": [picture("external-tool-image")]}
+                )
+            else:
+                self.finished = True
+
+    integration = RunnerIntegration(owner(service))
+    original = Runner.step
+    integration.install(Runner)
+    run = Runner()
+    for _ in range(2):
+        async for _ in run.step():
+            pass
+    assert all(image_count(call) == 0 for call in run.calls)
+    assert image_count(run.run_context.messages) == 0
+    integration.terminate()
+    assert Runner.step is original
+
+
+async def test_implicit_generation_cache_is_rejected_before_execution(service):
+    calls = []
+
+    class Runner:
+        async def step(self):
+            yield None
+
+        def _sanitize_contexts_for_provider(self, messages):
+            return messages
+
+    class Executor:
+        @classmethod
+        async def execute(cls, tool, run_context, **tool_args):
+            calls.append(tool_args)
+            yield "executed"
+
+    original = inspect.getattr_static(Executor, "execute")
+    integration = RunnerIntegration(owner(service))
+    integration.install(Runner, Executor)
+    context = SimpleNamespace(context=SimpleNamespace(event=service.event))
+    tool = SimpleNamespace(name="generate_image")
+    results = [
+        r async for r in Executor.execute(tool, context, use_context_images=True)
+    ]
+    assert results[0].isError and calls == []
+    results = [
+        r
+        async for r in Executor.execute(
+            tool,
+            context,
+            reference_images=["native-current-path"],
+            use_context_images=False,
+        )
+    ]
+    assert results == ["executed"] and not calls[-1]["use_context_images"]
+    integration.terminate()
+    assert inspect.getattr_static(Executor, "execute") is original
+
+
+async def test_generation_native_ids_are_materialized_before_consumer(service):
+    calls = []
+
+    class Runner:
+        async def step(self):
+            yield None
+
+        def _sanitize_contexts_for_provider(self, messages):
+            return messages
+
+    class Executor:
+        @classmethod
+        async def execute(cls, tool, run_context, **tool_args):
+            calls.append(tool_args)
+            yield "executed"
+
+    integration = RunnerIntegration(owner(service))
+    integration.install(Runner, Executor)
+    source = (await service.channels.current_images(service.event))[1]
+    context = SimpleNamespace(context=SimpleNamespace(event=service.event))
+    async for _ in Executor.execute(
+        SimpleNamespace(name="generate_image"),
+        context,
+        reference_images=[source.ref.uri],
+    ):
+        pass
+    assert calls[0]["reference_images"][0].startswith(str(service.tmp))
+    assert not calls[0]["use_context_images"]
+    integration.terminate()
+
+
+async def test_telegram_id_preservation_is_event_metadata_not_index(service):
+    class Adapter:
+        async def convert_message(self, update, context, get_reply=True):
+            return SimpleNamespace(message=[SimpleNamespace(type="Image")])
+
+    integration = RunnerIntegration(owner(service))
+    original = Adapter.convert_message
+    integration.preserve_telegram_ids(Adapter)
+    update = SimpleNamespace(
+        message=SimpleNamespace(
+            photo=[SimpleNamespace(file_id="native_album")], message_id=12
+        )
+    )
+    converted = await Adapter().convert_message(update, None)
+    assert converted.message[0]._channel_native_file_id == "native_album"
+    assert converted.message[0]._channel_native_message_id == "12"
+    assert service.cache.db.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+    integration.terminate()
+    assert Adapter.convert_message is original
+
+
+async def test_unload_does_not_overwrite_another_plugins_later_wrapper(service):
+    class Runner:
+        async def step(self):
+            yield None
+
+        def _sanitize_contexts_for_provider(self, messages):
+            return messages
+
+    integration = RunnerIntegration(owner(service))
+    integration.install(Runner)
+    ours = Runner.step
+
+    async def later(runner):
+        async for response in ours(runner):
+            yield response
+
+    Runner.step = later
+    integration.terminate()
+    assert Runner.step is later and not integration.active
+
+
+async def test_closing_wrapper_closes_underlying_step(service):
+    closed = []
+
+    class Runner:
+        req = request()
+        run_context = SimpleNamespace(
+            context=SimpleNamespace(event=service.event), messages=[]
+        )
+
+        def _sanitize_contexts_for_provider(self, messages):
+            return messages
+
+        def done(self):
+            return False
+
+        async def step(self):
+            try:
+                yield "partial"
+            finally:
+                closed.append(True)
+
+    integration = RunnerIntegration(owner(service))
+    integration.install(Runner)
+    iterator = Runner().step()
+    assert await anext(iterator) == "partial"
+    await iterator.aclose()
+    assert closed == [True]
+    integration.terminate()
+
+
+async def test_a_defers_core_caption_without_changing_shared_config(service):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Config:
+        provider_settings: dict
+
+    module = SimpleNamespace(_decorate_llm_request=AsyncMock())
+    config = Config(
+        {"default_image_caption_provider_id": "core-caption", "other": True}
+    )
+    integration = RunnerIntegration(owner(service))
+    integration.defer_builtin_caption(module)
+    await module._decorate_llm_request(service.event, None, service.context, config)
+    received = integration.patches[0][2].call_args.args[3]
+    assert received.provider_settings["default_image_caption_provider_id"] == ""
+    assert received.provider_settings["other"]
+    assert (
+        config.provider_settings["default_image_caption_provider_id"] == "core-caption"
+    )
+    integration.terminate()
+
+
+async def test_b_keeps_core_caption_configuration(service):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Config:
+        provider_settings: dict
+
+    service.config["default_mode"] = "B"
+    original = AsyncMock()
+    module = SimpleNamespace(_decorate_llm_request=original)
+    config = Config({"default_image_caption_provider_id": "core-caption"})
+    integration = RunnerIntegration(owner(service))
+    integration.defer_builtin_caption(module)
+    await module._decorate_llm_request(service.event, None, service.context, config)
+    assert original.call_args.args[3] is config
+    integration.terminate()

@@ -1,0 +1,21 @@
+{
+  "default_mode": {
+    "type": "string", "description": "图片上下文模式：off/关、A（原生 ID＋按需转述）、B（仅当前及引用图片当轮直传）",
+    "options": ["off", "A", "B"], "default": "off"
+  },
+  "channels": {
+    "type": "text", "description": "渠道覆盖 JSON：qq/telegram → platform:平台实例ID → session:完整UMO，后者优先。每项可填写 mode、caption_provider_id。",
+    "default": "{}"
+  },
+  "caption_provider_id": {
+    "type": "string", "description": "独立图片转述模型的 AstrBot provider ID，必须支持图片输入；可按渠道覆盖。未配置时返回明确错误，不把图片转交主模型。",
+    "default": ""
+  },
+  "cache_ttl_hours": {"type": "int", "description": "按需获取的文件和图片转述缓存有效期（小时）", "default": 168},
+  "max_cache_mb": {"type": "int", "description": "图片文件缓存容量上限（MB）", "default": 512},
+  "max_download_mb": {"type": "int", "description": "单张图片下载上限（MB）", "default": 20},
+  "request_timeout_seconds": {"type": "int", "description": "渠道请求超时；转述模型超时为此值的三倍", "default": 30},
+  "max_caption_chars": {"type": "int", "description": "单次图片转述最大字符数", "default": 4000},
+  "max_history_results": {"type": "int", "description": "历史发言工具最大返回条数", "default": 100},
+  "max_history_pages": {"type": "int", "description": "历史发言工具每次最多扫描页数，每页 100 条", "default": 10}
+}
