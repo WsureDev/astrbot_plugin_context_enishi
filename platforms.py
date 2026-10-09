@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -31,6 +32,23 @@ MAX_CAPTION_BYTES = 16 * 1024 * 1024
 
 class ChannelError(Exception):
     """A recoverable platform capability or retrieval failure."""
+
+
+class TransferLease:
+    """Background copies live until their actual consumer finishes."""
+
+    def __init__(self, paths, image_urls):
+        self.paths = paths
+        self.image_urls = image_urls
+        self.started = False
+        self.closed = False
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        for path in self.paths:
+            path.unlink(missing_ok=True)
 
 
 class Channels:
@@ -432,6 +450,38 @@ class Channels:
         for key in keys:
             for path in self._transfers.pop(key, set()):
                 path.unlink(missing_ok=True)
+
+    def lease_background_images(self, event: Any, sources: list[str]) -> TransferLease:
+        originals = {p.resolve() for p in self._transfers.get(id(event), set())}
+        copies, result = [], []
+        try:
+            for source in sources:
+                source = str(source)
+                path = (
+                    Path(source.removeprefix("file://")).resolve()
+                    if not source.startswith(
+                        ("http://", "https://", "data:", "base64:")
+                    )
+                    else None
+                )
+                if path not in originals:
+                    result.append(source)
+                    continue
+                with tempfile.NamedTemporaryFile(
+                    dir=path.parent,
+                    prefix="channel_media_background_",
+                    suffix=path.suffix,
+                    delete=False,
+                ) as output:
+                    copy = Path(output.name)
+                copies.append(copy)
+                shutil.copyfile(path, copy)
+                result.append(str(copy))
+        except BaseException:
+            for path in copies:
+                path.unlink(missing_ok=True)
+            raise
+        return TransferLease(copies, result)
 
     async def user_avatar(self, event: Any, user_id: str) -> ImageRef:
         user_id = user_id or str(event.get_sender_id())

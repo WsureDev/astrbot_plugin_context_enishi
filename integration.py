@@ -2,10 +2,32 @@ from __future__ import annotations
 
 import functools
 import inspect
+from contextvars import ContextVar
 from dataclasses import replace
 
 from .native import field
 from .settings import MODE_REFERENCE_ONLY
+
+BACKGROUND_IMAGES = ContextVar("channel_media_background_images", default=None)
+
+
+async def leased_iterator(iterator, lease):
+    try:
+        while True:
+            token = BACKGROUND_IMAGES.set(lease)
+            try:
+                item = await anext(iterator)
+            except StopAsyncIteration:
+                return
+            finally:
+                BACKGROUND_IMAGES.reset(token)
+            yield item
+    finally:
+        token = BACKGROUND_IMAGES.set(lease)
+        try:
+            await iterator.aclose()
+        finally:
+            BACKGROUND_IMAGES.reset(token)
 
 
 class RunnerIntegration:
@@ -73,6 +95,12 @@ class RunnerIntegration:
             @functools.wraps(execute)
             async def wrapped_execute(cls, tool, run_context, **tool_args):
                 event = field(field(run_context, "context"), "event")
+                lease = None
+                background = field(tool, "is_background_task", False) or (
+                    field(tool, "agent") is not None
+                    and str(tool_args.get("background_task", False)).lower()
+                    in {"true", "1", "yes"}
+                )
                 if (
                     integration.active
                     and event is not None
@@ -116,14 +144,56 @@ class RunnerIntegration:
                         if converted:
                             tool_args["reference_images"] = converted
                         tool_args["use_context_images"] = False
+                if (
+                    integration.active
+                    and event is not None
+                    and background
+                    and tool_args.get("image_urls")
+                ):
+                    sources = tool_args["image_urls"]
+                    if isinstance(sources, str):
+                        sources = [sources]
+                    candidate = integration.owner.channels.lease_background_images(
+                        event, sources
+                    )
+                    if candidate.paths:
+                        lease = candidate
+                        tool_args["image_urls"] = lease.image_urls
                 iterator = execute(tool, run_context, **tool_args)
+                # Clear an inherited lease when this invocation owns no files.
+                # Otherwise a nested background tool could close its parent's
+                # copies when it finishes.
+                iterator = leased_iterator(iterator, lease)
+                handed_off = False
                 try:
                     async for result in iterator:
+                        handed_off = handed_off or not field(result, "isError", False)
                         yield result
                 finally:
                     await iterator.aclose()
+                    if lease is not None and not handed_off and not lease.started:
+                        lease.close()
 
             self._replace(executor_class, "execute", classmethod(wrapped_execute))
+            for name in ("_do_handoff_background", "_execute_background"):
+                if hasattr(executor_class, name):
+                    self._lease_background_worker(executor_class, name)
+
+    def _lease_background_worker(self, executor_class, name):
+        original = getattr(executor_class, name)
+
+        @functools.wraps(original)
+        async def wrapped(cls, *args, **kwargs):
+            lease = BACKGROUND_IMAGES.get()
+            if lease is not None:
+                lease.started = True
+            try:
+                return await original(*args, **kwargs)
+            finally:
+                if lease is not None:
+                    lease.close()
+
+        self._replace(executor_class, name, classmethod(wrapped))
 
     def preserve_telegram_ids(self, adapter_class):
         original = adapter_class.convert_message
