@@ -243,6 +243,9 @@ class MediaPolicy:
     async def rewrite_messages(
         self, event: Any, messages: list[Any], state: RunState, persist: bool = False
     ):
+        if persist:
+            self.remove_history_pixels(messages)
+            return
         for message in messages:
             parts = field(message, "content", None)
             if not isinstance(parts, list):
@@ -292,16 +295,33 @@ class MediaPolicy:
             else:
                 message.content = output
 
-    async def finish(self, runner: Any):
+    def remove_history_pixels(self, messages):
+        for message in messages:
+            parts = field(message, "content", None)
+            if not isinstance(parts, list):
+                continue
+            output = [
+                self.text_factory(text=self._native_marker(part))
+                if field(part, "type") == "image_url"
+                else part
+                for part in parts
+            ]
+            if isinstance(message, dict):
+                message["content"] = output
+            else:
+                message.content = output
+
+    def finish_sync(self, runner: Any):
         event = field(field(runner.run_context, "context"), "event")
         if event is None:
             return
         state = self.state(event, runner.req)
         if state.mode != MODE_DISABLED:
-            await self.rewrite_messages(
-                event, runner.run_context.messages, state, persist=True
-            )
-        self.channels.release_transfers(event)
+            self.remove_history_pixels(runner.run_context.messages)
+        self.channels.release_transfers(event, run_context=runner.run_context)
+
+    async def finish(self, runner: Any):
+        self.finish_sync(runner)
 
     async def finish_context(self, event: Any, run_context: Any):
         state = getattr(run_context, "_channel_media_state", None)

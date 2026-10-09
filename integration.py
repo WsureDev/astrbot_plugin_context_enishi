@@ -4,30 +4,34 @@ import functools
 import inspect
 from contextvars import ContextVar
 from dataclasses import replace
+from weakref import WeakKeyDictionary, ref
 
+from .compatibility import LegacyBatchDelivery
 from .native import field
+from .platforms import TRANSFER_CONSUMER, TRANSFER_CONTEXT
 from .settings import MODE_REFERENCE_ONLY
 
 BACKGROUND_IMAGES = ContextVar("channel_media_background_images", default=None)
+BACKGROUND_RUN = ContextVar("channel_media_background_run", default=False)
 
 
-async def leased_iterator(iterator, lease):
+async def scoped_iterator(iterator, variable, value):
     try:
         while True:
-            token = BACKGROUND_IMAGES.set(lease)
+            token = variable.set(value)
             try:
                 item = await anext(iterator)
             except StopAsyncIteration:
                 return
             finally:
-                BACKGROUND_IMAGES.reset(token)
+                variable.reset(token)
             yield item
     finally:
-        token = BACKGROUND_IMAGES.set(lease)
+        token = variable.set(value)
         try:
             await iterator.aclose()
         finally:
-            BACKGROUND_IMAGES.reset(token)
+            variable.reset(token)
 
 
 class RunnerIntegration:
@@ -37,102 +41,167 @@ class RunnerIntegration:
         self.owner = owner
         self.patches = []
         self.active = True
+        self.generation = None
+        self.delivery = LegacyBatchDelivery(owner)
+        self.instances = WeakKeyDictionary()
 
     def install(self, runner_class, executor_class=None):
         if self.patches:
             return
-        step = runner_class.step
+        reset = runner_class.reset
+        transition = runner_class._transition_state
         sanitize = runner_class._sanitize_contexts_for_provider
-        if not inspect.isasyncgenfunction(step) or not callable(sanitize):
+        if not inspect.iscoroutinefunction(reset) or not all(
+            callable(method) for method in (transition, sanitize)
+        ):
             raise RuntimeError(
                 "unsupported AstrBot runner; media isolation cannot be guaranteed"
             )
-        previous = getattr(step, "_channel_media_owner", None)
+        previous = getattr(reset, "_channel_media_owner", None)
         if previous is not None and previous.active:
             raise RuntimeError(
                 "another active channel media plugin instance owns the runner"
             )
         self.active = True
+        self.delivery.active = True
+        generation = self.generation = object()
         integration = self
 
-        @functools.wraps(step)
-        async def wrapped_step(runner):
-            if integration.active and integration.owner.enabled_for_runner(runner):
-                await integration.owner.policy.before_step(runner)
-            iterator = step(runner)
-            try:
-                async for response in iterator:
-                    yield response
-            finally:
-                await iterator.aclose()
-                if (
-                    integration.active
-                    and integration.owner.enabled_for_runner(runner)
-                    and runner.done()
-                ):
-                    await integration.owner.policy.finish(runner)
-                elif integration.active and runner.done():
+        @functools.wraps(reset)
+        async def wrapped_reset(runner, *args, **kwargs):
+            result = await reset(runner, *args, **kwargs)
+            if integration.current(generation):
+                integration.attach_runner(runner, generation)
+            return result
+
+        wrapped_reset._channel_media_owner = self
+
+        @functools.wraps(transition)
+        def wrapped_transition(runner, *args, **kwargs):
+            result = transition(runner, *args, **kwargs)
+            if integration.current(generation) and runner.done():
+                if integration.owner.enabled_for_runner(runner):
+                    integration.owner.policy.finish_sync(runner)
+                else:
                     event = field(field(runner.run_context, "context"), "event")
                     if event is not None:
-                        integration.owner.channels.release_transfers(event)
-
-        wrapped_step._channel_media_owner = self
+                        integration.owner.channels.release_transfers(
+                            event, run_context=runner.run_context
+                        )
+            return result
 
         @functools.wraps(sanitize)
         def wrapped_sanitize(runner, messages):
             payload = sanitize(runner, messages)
             return (
                 integration.owner.policy.sanitize_payload(runner, payload)
-                if integration.active and integration.owner.enabled_for_runner(runner)
+                if integration.current(generation)
+                and integration.owner.enabled_for_runner(runner)
                 else payload
             )
 
-        self._replace(runner_class, "step", wrapped_step)
+        # The existing monitor owns step, _iter_llm_responses and execute.
+        # Keep those exact function objects, including across reload/unload.
+        self._replace(runner_class, "reset", wrapped_reset)
+        self._replace(runner_class, "_transition_state", wrapped_transition)
         self._replace(runner_class, "_sanitize_contexts_for_provider", wrapped_sanitize)
-        if executor_class is not None:
-            execute = executor_class.execute
+        handle = getattr(runner_class, "_handle_function_tools", None)
+        if handle is not None:
 
-            @functools.wraps(execute)
-            async def wrapped_execute(cls, tool, run_context, **tool_args):
-                event = field(field(run_context, "context"), "event")
-                lease = None
-                background = field(tool, "is_background_task", False) or (
-                    field(tool, "agent") is not None
-                    and str(tool_args.get("background_task", False)).lower()
-                    in {"true", "1", "yes"}
+            @functools.wraps(handle)
+            async def wrapped_tools(runner, *args, **kwargs):
+                iterator = scoped_iterator(
+                    handle(runner, *args, **kwargs), BACKGROUND_IMAGES, None
                 )
-                if (
-                    integration.active
-                    and event is not None
-                    and integration.owner.enabled_event(event)
-                ):
-                    if field(tool, "name") == "generate_image":
-                        import mcp.types
+                iterator = scoped_iterator(
+                    iterator, TRANSFER_CONTEXT, runner.run_context
+                )
+                try:
+                    async for result in iterator:
+                        yield result
+                finally:
+                    await iterator.aclose()
 
-                        implicit = tool_args.get("use_context_images", False)
-                        implicit = implicit is True or str(implicit).lower() in {
-                            "true",
-                            "1",
-                            "yes",
-                        }
-                        if implicit:
-                            yield mcp.types.CallToolResult(
-                                content=[
-                                    mcp.types.TextContent(
-                                        type="text",
-                                        text=(
-                                            "Channel media policy requires explicit references. Call fetch_channel_image for the desired image IDs, "
-                                            "then call generate_image with reference_images=[returned paths] and use_context_images=false."
-                                        ),
-                                    )
-                                ],
-                                isError=True,
-                            )
-                            return
-                        references = tool_args.get("reference_images") or []
-                        if isinstance(references, str):
-                            references = [references]
-                        converted = []
+            self._replace(runner_class, "_handle_function_tools", wrapped_tools)
+        if executor_class is not None:
+            for name in ("_execute_local", "_execute_mcp"):
+                if hasattr(executor_class, name):
+                    self._wrap_tool_boundary(executor_class, name, generation)
+            if hasattr(executor_class, "_execute_handoff_background"):
+                self._wrap_background_submission(executor_class, generation)
+            for name in ("_do_handoff_background", "_execute_background"):
+                if hasattr(executor_class, name):
+                    self._lease_background_worker(executor_class, name, generation)
+
+    def current(self, generation):
+        return self.active and self.generation is generation
+
+    def attach_runner(self, runner, generation):
+        manager = runner.request_context_manager
+        process = manager.process
+        integration = self
+        event = field(field(runner.run_context, "context"), "event")
+        if event is not None:
+            self.owner.channels.register_runner(event, runner.run_context)
+
+        @functools.wraps(process)
+        async def wrapped_process(*args, **kwargs):
+            if integration.current(generation) and integration.owner.enabled_for_runner(
+                runner
+            ):
+                await integration.owner.policy.before_step(runner)
+            return await process(*args, **kwargs)
+
+        wrapped_process._channel_media_original = process
+        manager.process = wrapped_process
+        try:
+            self.instances[manager] = ref(wrapped_process)
+        except TypeError:
+            # Some third-party managers are not weak-referenceable. Their
+            # instance wrapper still becomes inert when the generation ends.
+            pass
+
+    def _wrap_tool_boundary(self, executor_class, name, generation):
+        execute = inspect.getattr_static(executor_class, name).__func__
+        integration = self
+
+        @functools.wraps(execute)
+        async def wrapped(cls, tool, run_context, **tool_args):
+            event = field(field(run_context, "context"), "event")
+            if (
+                integration.current(generation)
+                and event is not None
+                and integration.owner.enabled_event(event)
+            ):
+                if field(tool, "name") == "generate_image":
+                    import mcp.types
+
+                    implicit = tool_args.get("use_context_images", False)
+                    implicit = implicit is True or str(implicit).lower() in {
+                        "true",
+                        "1",
+                        "yes",
+                    }
+                    if implicit:
+                        yield mcp.types.CallToolResult(
+                            content=[
+                                mcp.types.TextContent(
+                                    type="text",
+                                    text=(
+                                        "Channel media policy requires explicit references. Call fetch_channel_image for the desired image IDs, "
+                                        "then call generate_image with reference_images=[returned paths] and use_context_images=false."
+                                    ),
+                                )
+                            ],
+                            isError=True,
+                        )
+                        return
+                    references = tool_args.get("reference_images") or []
+                    if isinstance(references, str):
+                        references = [references]
+                    converted = []
+                    token = TRANSFER_CONTEXT.set(run_context)
+                    try:
                         for reference in references:
                             if str(reference).startswith(("qq://", "telegram://")):
                                 path, _ = await integration.owner.channels.fetch_image(
@@ -141,55 +210,113 @@ class RunnerIntegration:
                                 converted.append(str(path))
                             else:
                                 converted.append(reference)
-                        if converted:
-                            tool_args["reference_images"] = converted
-                        tool_args["use_context_images"] = False
-                if (
-                    integration.active
-                    and event is not None
-                    and background
-                    and tool_args.get("image_urls")
-                ):
-                    sources = tool_args["image_urls"]
-                    if isinstance(sources, str):
-                        sources = [sources]
-                    candidate = integration.owner.channels.lease_background_images(
-                        event, sources
-                    )
-                    if candidate.paths:
-                        lease = candidate
-                        tool_args["image_urls"] = lease.image_urls
-                iterator = execute(tool, run_context, **tool_args)
-                # Clear an inherited lease when this invocation owns no files.
-                # Otherwise a nested background tool could close its parent's
-                # copies when it finishes.
-                iterator = leased_iterator(iterator, lease)
-                handed_off = False
-                try:
-                    async for result in iterator:
-                        handed_off = handed_off or not field(result, "isError", False)
-                        yield result
-                finally:
-                    await iterator.aclose()
-                    if lease is not None and not handed_off and not lease.started:
-                        lease.close()
+                    finally:
+                        TRANSFER_CONTEXT.reset(token)
+                    if converted:
+                        tool_args["reference_images"] = converted
+                    tool_args["use_context_images"] = False
+            iterator = execute(cls, tool, run_context, **tool_args)
+            iterator = scoped_iterator(iterator, TRANSFER_CONTEXT, run_context)
+            try:
+                async for result in iterator:
+                    if (
+                        integration.current(generation)
+                        and result is not None
+                        and not field(result, "isError", False)
+                        and BACKGROUND_RUN.get()
+                        and integration.owner.enabled_event(event)
+                        and integration.delivery.schedule(event, tool)
+                    ):
+                        result = integration.delivery.pending_notice(result)
+                    yield result
+            finally:
+                await iterator.aclose()
 
-            self._replace(executor_class, "execute", classmethod(wrapped_execute))
-            for name in ("_do_handoff_background", "_execute_background"):
-                if hasattr(executor_class, name):
-                    self._lease_background_worker(executor_class, name)
+        self._replace(executor_class, name, classmethod(wrapped))
 
-    def _lease_background_worker(self, executor_class, name):
-        original = getattr(executor_class, name)
+    def reserve_images(self, event, args):
+        sources = args.get("image_urls") or []
+        if isinstance(sources, str):
+            sources = [sources]
+        prepared = BACKGROUND_IMAGES.get()
+        if (
+            prepared is not None
+            and not prepared.started
+            and not prepared.closed
+            and prepared.event_key == id(event)
+            and sources == prepared.image_urls
+        ):
+            return prepared
+        lease = self.owner.channels.lease_background_images(event, sources)
+        if lease.paths:
+            args["image_urls"] = lease.image_urls
+            return lease
+        return None
+
+    def prepare_background_call(self, event, tool, args):
+        if not self.active or not isinstance(args, dict):
+            return
+        background = field(tool, "is_background_task", False) or (
+            field(tool, "agent") is not None and args.get("background_task")
+        )
+        # Only our own ContextVar is changed. The tool generator scopes it to
+        # each advance, and the SDK's created task inherits the lease.
+        BACKGROUND_IMAGES.set(self.reserve_images(event, args) if background else None)
+
+    def _wrap_background_submission(self, executor_class, generation):
+        original = inspect.getattr_static(
+            executor_class, "_execute_handoff_background"
+        ).__func__
+        integration = self
 
         @functools.wraps(original)
-        async def wrapped(cls, *args, **kwargs):
+        async def wrapped(cls, tool, run_context, **args):
+            event = field(field(run_context, "context"), "event")
+            lease = (
+                integration.reserve_images(event, args)
+                if integration.current(generation)
+                else None
+            )
+            iterator = scoped_iterator(
+                original(cls, tool, run_context, **args), BACKGROUND_IMAGES, lease
+            )
+            accepted = False
+            try:
+                async for result in iterator:
+                    accepted |= result is not None and not field(
+                        result, "isError", False
+                    )
+                    yield result
+            finally:
+                await iterator.aclose()
+                if lease is not None and not accepted and not lease.started:
+                    lease.close()
+
+        self._replace(
+            executor_class, "_execute_handoff_background", classmethod(wrapped)
+        )
+
+    def _lease_background_worker(self, executor_class, name, generation):
+        original = inspect.getattr_static(executor_class, name).__func__
+        integration = self
+
+        @functools.wraps(original)
+        async def wrapped(cls, tool, run_context, *args, **kwargs):
             lease = BACKGROUND_IMAGES.get()
+            if lease is None and integration.current(generation):
+                event = field(field(run_context, "context"), "event")
+                lease = integration.reserve_images(event, kwargs)
             if lease is not None:
                 lease.started = True
+            token = BACKGROUND_RUN.set(True)
+            consumer = {"events": set()}
+            consumer_token = TRANSFER_CONSUMER.set(consumer)
             try:
-                return await original(*args, **kwargs)
+                return await original(cls, tool, run_context, *args, **kwargs)
             finally:
+                BACKGROUND_RUN.reset(token)
+                TRANSFER_CONSUMER.reset(consumer_token)
+                integration.owner.channels.release_consumer(consumer)
                 if lease is not None:
                     lease.close()
 
@@ -265,12 +392,22 @@ class RunnerIntegration:
 
     def _replace(self, target, name, wrapper):
         original = inspect.getattr_static(target, name)
+        local = name in vars(target)
         setattr(target, name, wrapper)
-        self.patches.append((target, name, original, wrapper))
+        self.patches.append((target, name, original, wrapper, local))
 
     def terminate(self):
         self.active = False
-        for target, name, original, wrapper in reversed(self.patches):
+        self.delivery.detach()
+        for manager, wrapper_ref in list(self.instances.items()):
+            wrapper = wrapper_ref()
+            if wrapper is not None and manager.process is wrapper:
+                manager.process = wrapper._channel_media_original
+        self.instances.clear()
+        for target, name, original, wrapper, local in reversed(self.patches):
             if inspect.getattr_static(target, name) is wrapper:
-                setattr(target, name, original)
+                if local:
+                    setattr(target, name, original)
+                else:
+                    delattr(target, name)
         self.patches.clear()

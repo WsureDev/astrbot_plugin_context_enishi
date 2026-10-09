@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.util
 import logging
 import os
@@ -42,6 +43,8 @@ def runtime():
         if isinstance(n, ast.ClassDef) and n.name == "ToolLoopAgentRunner"
     )
     selected = {
+        "reset",
+        "_assemble_request_context_for_provider",
         "step",
         "_iter_llm_responses",
         "_sanitize_contexts_for_provider",
@@ -69,8 +72,25 @@ def runtime():
             self.text = text
             return self
 
+    class Manager:
+        def __init__(self, config):
+            self.config = config
+            self.seen = []
+
+        async def process(self, messages, **kwargs):
+            self.seen.append([message.model_dump() for message in messages])
+            return messages
+
+    class Stats:
+        def __init__(self):
+            self.time_to_first_token = 0
+
+        def to_dict(self):
+            return {}
+
     namespace = dict(
         AgentState=State,
+        asyncio=asyncio,
         time=time,
         logger=logging.getLogger("test"),
         AgentResponse=Chain,
@@ -80,6 +100,11 @@ def runtime():
         Message=messages.Message,
         TextPart=messages.TextPart,
         ThinkPart=messages.ThinkPart,
+        ContextConfig=SimpleNamespace,
+        ContextManager=Manager,
+        AgentStats=Stats,
+        EstimateTokenCounter=lambda: None,
+        bind_checkpoint_messages=messages.bind_checkpoint_messages,
     )
     module = ast.Module(
         body=[
@@ -123,6 +148,9 @@ async def test_actual_astrbot_step_provider_payload_and_history(
     payloads, compactions = [], []
 
     class Runner(runtime.compiled):
+        async def reset(self):
+            pass
+
         def __init__(self):
             self.req = request(["current", "reply"])
             self.req.conversation = None
@@ -203,6 +231,7 @@ async def test_actual_astrbot_step_provider_payload_and_history(
     integration = RunnerIntegration(owner(service))
     integration.install(Runner)
     run = Runner()
+    await run.reset()
     async for _ in run.step():
         pass
 
@@ -219,3 +248,117 @@ async def test_actual_astrbot_step_provider_payload_and_history(
     saved = runtime.messages.dump_messages_with_checkpoints(run.run_context.messages)
     assert count(saved) == (3 if mode == "disabled" else 0)
     integration.terminate()
+
+
+@pytest.mark.parametrize(
+    "mode,expected", [("reference_only", 0), ("current_turn", 2), ("disabled", 3)]
+)
+async def test_actual_reset_attaches_guard_to_new_context_manager(
+    service, runtime, mode, expected
+):
+    service.config["channel_settings"][0]["image_mode"] = mode
+    service.policy.text_factory = runtime.messages.TextPart
+    req = request(["current", "reply"])
+    req.contexts = [
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": "old"}}],
+        }
+    ]
+    req.prompt, req.audio_urls = "question", []
+    req.conversation, req.model, req.session_id, req.func_tool = (
+        None,
+        None,
+        "session",
+        None,
+    )
+    req.assemble_context = AsyncMock(
+        return_value={
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": value}}
+                for value in req.image_urls
+            ],
+        }
+    )
+    response = SimpleNamespace(
+        is_chunk=False,
+        usage=None,
+        role="assistant",
+        tools_call_name=[],
+        reasoning_content=None,
+        reasoning_signature=None,
+        result_chain=None,
+        completion_text="answer",
+    )
+    payloads = []
+
+    async def provider_call(**kwargs):
+        payloads.append(kwargs["contexts"])
+        return response
+
+    class Runner(runtime.compiled):
+        async def _await_or_stop(self, awaitable):
+            return await awaitable
+
+        def _func_tool_for_provider(self):
+            return None
+
+        async def _iter_llm_responses_with_fallback(self):
+            async for item in self._iter_llm_responses():
+                yield item
+
+        def _transition_state(self, state):
+            self._state = state
+
+        def _simple_print_message_role(self, *args):
+            pass
+
+        def _is_stop_requested(self):
+            return False
+
+        def _resolve_unconsumed_follow_ups(self):
+            pass
+
+        def done(self):
+            return self._state in {runtime.State.DONE, runtime.State.ERROR}
+
+    integration = RunnerIntegration(owner(service))
+    original_step = Runner.step
+    integration.install(Runner)
+    run = Runner()
+    await run.reset(
+        provider=SimpleNamespace(
+            provider_config={"modalities": []},
+            text_chat=AsyncMock(side_effect=provider_call),
+        ),
+        request=req,
+        run_context=SimpleNamespace(context=SimpleNamespace(event=service.event)),
+        tool_executor=SimpleNamespace(),
+        agent_hooks=SimpleNamespace(
+            on_agent_begin=AsyncMock(), on_agent_done=AsyncMock()
+        ),
+    )
+    try:
+        [item async for item in run.step()]
+        assert Runner.step is original_step
+
+        def count(records):
+            normalized = [
+                record.model_dump() if hasattr(record, "model_dump") else record
+                for record in records
+            ]
+            return sum(
+                part["type"] == "image_url"
+                for message in normalized
+                for part in (message.get("content") or [])
+                if isinstance(part, dict)
+            )
+
+        assert count(run.request_context_manager.seen[0]) == expected
+        assert count(payloads[0]) == expected
+        assert count(
+            runtime.messages.dump_messages_with_checkpoints(run.run_context.messages)
+        ) == (3 if mode == "disabled" else 0)
+    finally:
+        integration.terminate()

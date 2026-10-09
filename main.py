@@ -102,8 +102,13 @@ class ChannelMediaTools(Star):
         self, event: AstrMessageEvent, run_context, response
     ):
         if self.enabled_event(event):
-            # The step wrapper also covers interrupted/empty tool completion.
+            # The state-transition guard covers error and aborted completion.
             await self.policy.finish_context(event, run_context)
+
+    @filter.on_using_llm_tool(priority=-2_147_483_647)
+    async def reserve_background_images(self, event: AstrMessageEvent, tool, tool_args):
+        if self.enabled_event(event):
+            self.integration.prepare_background_call(event, tool, tool_args)
 
     @filter.llm_tool(name="describe_channel_image")
     async def describe_channel_image(
@@ -236,6 +241,6 @@ class ChannelMediaTools(Star):
         self.flow.terminate()
         self.integration.terminate()
         if self.channels is not None:
-            self.channels.release_transfers()
+            self.channels.release_transfers(preserve_consumers=True)
         if self.cache is not None:
             self.cache.close()

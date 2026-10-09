@@ -6,10 +6,11 @@ import io
 import shutil
 import tempfile
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from weakref import WeakValueDictionary
+from weakref import WeakValueDictionary, finalize
 
 import aiohttp
 from PIL import Image, UnidentifiedImageError
@@ -28,6 +29,13 @@ from .native import (
 from .settings import Settings, platform_name, scope
 
 MAX_CAPTION_BYTES = 16 * 1024 * 1024
+TRANSFER_CONTEXT = ContextVar("channel_media_transfer_context", default=None)
+TRANSFER_CONSUMER = ContextVar("channel_media_transfer_consumer", default=None)
+
+
+def delete_transfer_files(paths):
+    for path in paths:
+        path.unlink(missing_ok=True)
 
 
 class ChannelError(Exception):
@@ -37,18 +45,21 @@ class ChannelError(Exception):
 class TransferLease:
     """Background copies live until their actual consumer finishes."""
 
-    def __init__(self, paths, image_urls):
+    def __init__(self, paths, image_urls, event_key):
         self.paths = paths
         self.image_urls = image_urls
+        self.event_key = event_key
         self.started = False
         self.closed = False
+        # A scheduled SDK task retains the ContextVar even if our worker
+        # wrapper is removed before it starts. Its context then owns cleanup.
+        self._cleanup = finalize(self, delete_transfer_files, paths)
 
     def close(self):
         if self.closed:
             return
         self.closed = True
-        for path in self.paths:
-            path.unlink(missing_ok=True)
+        self._cleanup()
 
 
 class Channels:
@@ -60,6 +71,13 @@ class Channels:
         self.max_bytes = 20 * 1024 * 1024
         self._locks = WeakValueDictionary()
         self._transfers: dict[int, set[Path]] = {}
+        self._transfer_owners: dict[Path, int | None] = {}
+        self._active_consumers: set[int] = set()
+        self._leased_paths = WeakValueDictionary()
+
+    def register_runner(self, event, run_context):
+        if event.get_extra("_channel_media_root_context") is None:
+            event.set_extra("_channel_media_root_context", id(run_context))
 
     def client(self, event: Any, telegram: bool = False):
         current = getattr(event, "client" if telegram else "bot", None)
@@ -440,16 +458,68 @@ class Channels:
             output.write(data)
             path = Path(output.name)
         self._transfers.setdefault(id(event), set()).add(path)
+        context = TRANSFER_CONTEXT.get()
+        if field(field(context, "context"), "event") is not event:
+            context = None
+        consumer = TRANSFER_CONSUMER.get()
+        if consumer is not None:
+            consumer["events"].add(id(event))
+            self._active_consumers.add(id(consumer))
+        self._transfer_owners[path] = (
+            id(consumer)
+            if consumer is not None
+            else id(context)
+            if context is not None
+            else None
+        )
         tracker = getattr(event, "track_temporary_local_file", None)
-        if callable(tracker):
+        if (
+            callable(tracker)
+            and consumer is None
+            and (
+                context is None
+                or event.get_extra("_channel_media_root_context") == id(context)
+            )
+        ):
             tracker(str(path))
         return path, metadata
 
-    def release_transfers(self, event: Any = None):
+    def release_transfers(
+        self,
+        event: Any = None,
+        run_context: Any = None,
+        preserve_consumers: bool = False,
+    ):
         keys = [id(event)] if event is not None else list(self._transfers)
         for key in keys:
-            for path in self._transfers.pop(key, set()):
-                path.unlink(missing_ok=True)
+            self._release_owned(
+                key,
+                None if run_context is None else {None, id(run_context)},
+                preserve_consumers,
+            )
+
+    def release_consumer(self, consumer):
+        for key in consumer["events"]:
+            self._release_owned(key, {id(consumer)})
+        self._active_consumers.discard(id(consumer))
+
+    def _release_owned(self, key, owners, preserve_consumers=False):
+        paths = self._transfers.get(key, set())
+        selected = {
+            path
+            for path in paths
+            if (owners is None or self._transfer_owners.get(path) in owners)
+            and (
+                not preserve_consumers
+                or self._transfer_owners.get(path) not in self._active_consumers
+            )
+        }
+        for path in selected:
+            path.unlink(missing_ok=True)
+            self._transfer_owners.pop(path, None)
+        paths.difference_update(selected)
+        if not paths:
+            self._transfers.pop(key, None)
 
     def lease_background_images(self, event: Any, sources: list[str]) -> TransferLease:
         originals = {p.resolve() for p in self._transfers.get(id(event), set())}
@@ -464,7 +534,12 @@ class Channels:
                     )
                     else None
                 )
-                if path not in originals:
+                inherited = self._leased_paths.get(path)
+                if path not in originals and (
+                    inherited is None
+                    or inherited.closed
+                    or inherited.event_key != id(event)
+                ):
                     result.append(source)
                     continue
                 with tempfile.NamedTemporaryFile(
@@ -481,7 +556,10 @@ class Channels:
             for path in copies:
                 path.unlink(missing_ok=True)
             raise
-        return TransferLease(copies, result)
+        lease = TransferLease(copies, result, id(event))
+        for path in copies:
+            self._leased_paths[path.resolve()] = lease
+        return lease
 
     async def user_avatar(self, event: Any, user_id: str) -> ImageRef:
         user_id = user_id or str(event.get_sender_id())

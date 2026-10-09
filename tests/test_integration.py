@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gc
 import inspect
+import weakref
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,6 +13,7 @@ from .conftest import image_count, picture, request
 
 def owner(service):
     return SimpleNamespace(
+        context=service.context,
         policy=service.policy,
         channels=service.channels,
         settings=service.settings,
@@ -21,8 +24,25 @@ def owner(service):
     )
 
 
-async def test_step_guard_covers_multiple_tools_and_final_history(service):
-    class Runner:
+class RunnerBoundary:
+    async def reset(self):
+        self.request_context_manager = SimpleNamespace(process=self.process)
+
+    async def process(self, messages, **kwargs):
+        return messages
+
+    def _transition_state(self, state):
+        self.finished = state in {"DONE", "ERROR"}
+
+    def done(self):
+        return getattr(self, "finished", False)
+
+    def _sanitize_contexts_for_provider(self, messages):
+        return messages
+
+
+async def test_context_guard_covers_multiple_tools_and_final_history(service):
+    class Runner(RunnerBoundary):
         def __init__(self):
             self.req = request()
             self.run_context = SimpleNamespace(
@@ -39,6 +59,9 @@ async def test_step_guard_covers_multiple_tools_and_final_history(service):
             return self.finished
 
         async def step(self):
+            self.run_context.messages = await self.request_context_manager.process(
+                self.run_context.messages
+            )
             self.calls.append(
                 self._sanitize_contexts_for_provider(self.run_context.messages)
             )
@@ -48,12 +71,13 @@ async def test_step_guard_covers_multiple_tools_and_final_history(service):
                     {"role": "user", "content": [picture("external-tool-image")]}
                 )
             else:
-                self.finished = True
+                self._transition_state("DONE")
 
     integration = RunnerIntegration(owner(service))
     original = Runner.step
     integration.install(Runner)
     run = Runner()
+    await run.reset()
     for _ in range(2):
         async for _ in run.step():
             pass
@@ -66,7 +90,7 @@ async def test_step_guard_covers_multiple_tools_and_final_history(service):
 async def test_implicit_generation_cache_is_rejected_before_execution(service):
     calls = []
 
-    class Runner:
+    class Runner(RunnerBoundary):
         async def step(self):
             yield None
 
@@ -76,6 +100,11 @@ async def test_implicit_generation_cache_is_rejected_before_execution(service):
     class Executor:
         @classmethod
         async def execute(cls, tool, run_context, **tool_args):
+            async for item in cls._execute_local(tool, run_context, **tool_args):
+                yield item
+
+        @classmethod
+        async def _execute_local(cls, tool, run_context, **tool_args):
             calls.append(tool_args)
             yield "executed"
 
@@ -105,7 +134,7 @@ async def test_implicit_generation_cache_is_rejected_before_execution(service):
 async def test_generation_native_ids_are_materialized_before_consumer(service):
     calls = []
 
-    class Runner:
+    class Runner(RunnerBoundary):
         async def step(self):
             yield None
 
@@ -115,6 +144,11 @@ async def test_generation_native_ids_are_materialized_before_consumer(service):
     class Executor:
         @classmethod
         async def execute(cls, tool, run_context, **tool_args):
+            async for item in cls._execute_local(tool, run_context, **tool_args):
+                yield item
+
+        @classmethod
+        async def _execute_local(cls, tool, run_context, **tool_args):
             calls.append(tool_args)
             yield "executed"
 
@@ -155,7 +189,7 @@ async def test_telegram_id_preservation_is_event_metadata_not_index(service):
 
 
 async def test_unload_does_not_overwrite_another_plugins_later_wrapper(service):
-    class Runner:
+    class Runner(RunnerBoundary):
         async def step(self):
             yield None
 
@@ -164,21 +198,20 @@ async def test_unload_does_not_overwrite_another_plugins_later_wrapper(service):
 
     integration = RunnerIntegration(owner(service))
     integration.install(Runner)
-    ours = Runner.step
+    ours = Runner.reset
 
     async def later(runner):
-        async for response in ours(runner):
-            yield response
+        await ours(runner)
 
-    Runner.step = later
+    Runner.reset = later
     integration.terminate()
-    assert Runner.step is later and not integration.active
+    assert Runner.reset is later and not integration.active
 
 
-async def test_closing_wrapper_closes_underlying_step(service):
+async def test_step_identity_and_generator_close_are_untouched(service):
     closed = []
 
-    class Runner:
+    class Runner(RunnerBoundary):
         req = request()
         run_context = SimpleNamespace(
             context=SimpleNamespace(event=service.event), messages=[]
@@ -197,7 +230,9 @@ async def test_closing_wrapper_closes_underlying_step(service):
                 closed.append(True)
 
     integration = RunnerIntegration(owner(service))
+    original = Runner.step
     integration.install(Runner)
+    assert Runner.step is original
     iterator = Runner().step()
     assert await anext(iterator) == "partial"
     await iterator.aclose()
@@ -246,3 +281,78 @@ async def test_current_turn_keeps_core_caption_configuration(service):
     await module._decorate_llm_request(service.event, None, service.context, config)
     assert original.call_args.args[3] is config
     integration.terminate()
+
+
+async def test_finished_runner_is_not_retained_by_instance_patches(service):
+    class Manager:
+        async def process(self, messages, **kwargs):
+            return messages
+
+    class Runner(RunnerBoundary):
+        def __init__(self):
+            self.req = request()
+            self.run_context = SimpleNamespace(
+                context=SimpleNamespace(event=service.event), messages=[]
+            )
+
+        async def reset(self):
+            self.request_context_manager = Manager()
+
+    integration = RunnerIntegration(owner(service))
+    integration.install(Runner)
+    run = Runner()
+    await run.reset()
+    runner_ref, manager_ref = weakref.ref(run), weakref.ref(run.request_context_manager)
+    del run
+    gc.collect()
+    assert runner_ref() is None and manager_ref() is None
+    assert not integration.instances
+    integration.terminate()
+
+
+async def test_channel_excluded_from_policy_keeps_its_images(service):
+    class Runner(RunnerBoundary):
+        def __init__(self):
+            self.req = request()
+            self.run_context = SimpleNamespace(
+                context=SimpleNamespace(event=service.event),
+                messages=[{"role": "user", "content": [picture("preserve")]}],
+            )
+
+    disabled_owner = owner(service)
+    disabled_owner.enabled_for_runner = lambda runner: False
+    disabled_owner.enabled_event = lambda event: False
+    integration = RunnerIntegration(disabled_owner)
+    integration.install(Runner)
+    run = Runner()
+    await run.reset()
+    await run.request_context_manager.process(run.run_context.messages)
+    run._transition_state("DONE")
+    assert image_count(run.run_context.messages) == 1
+    integration.terminate()
+
+
+async def test_tool_wrapper_preserves_executor_subclass_dispatch(service):
+    class Executor:
+        value = "base"
+
+        @classmethod
+        async def _execute_local(cls, tool, run_context, **args):
+            yield cls.value
+
+    class Specialized(Executor):
+        value = "specialized"
+
+    integration = RunnerIntegration(owner(service))
+    integration.install(RunnerBoundary, Executor)
+    try:
+        context = SimpleNamespace(context=SimpleNamespace(event=service.event))
+        results = [
+            item
+            async for item in Specialized._execute_local(
+                SimpleNamespace(name="test"), context
+            )
+        ]
+        assert results == ["specialized"]
+    finally:
+        integration.terminate()
