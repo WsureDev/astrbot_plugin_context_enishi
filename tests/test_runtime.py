@@ -102,11 +102,13 @@ def runtime():
     return SimpleNamespace(messages=messages, compiled=compiled, State=State)
 
 
-@pytest.mark.parametrize("mode,expected", [("A", 0), ("B", 2), ("off", 3)])
+@pytest.mark.parametrize(
+    "mode,expected", [("reference_only", 0), ("current_turn", 2), ("disabled", 3)]
+)
 async def test_actual_astrbot_step_provider_payload_and_history(
     service, runtime, mode, expected
 ):
-    service.config["default_mode"] = mode
+    service.config["channel_settings"][0]["image_mode"] = mode
     service.policy.text_factory = runtime.messages.TextPart
     response = SimpleNamespace(
         is_chunk=False,
@@ -215,5 +217,5 @@ async def test_actual_astrbot_step_provider_payload_and_history(
     )
     assert count(compactions[0]) == expected
     saved = runtime.messages.dump_messages_with_checkpoints(run.run_context.messages)
-    assert count(saved) == (3 if mode == "off" else 0)
+    assert count(saved) == (3 if mode == "disabled" else 0)
     integration.terminate()

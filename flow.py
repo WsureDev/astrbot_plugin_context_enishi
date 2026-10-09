@@ -4,7 +4,7 @@ import re
 from types import SimpleNamespace
 
 from .native import ImageRef, field, qq_images, telegram_images
-from .settings import platform_name, scope
+from .settings import MODE_DISABLED, platform_name, scope
 
 PLACEHOLDER = re.compile(r"\[(?:图片|Image)\]")
 
@@ -102,7 +102,7 @@ class FlowIntegration:
                         get_sender_id=lambda: record["sender_id"],
                         unified_msg_origin=f"{record['platform_id']}:GroupMessage:{record['group_id']}",
                     )
-                    if integration.owner.settings.for_event(fake).mode != "off":
+                    if integration.owner.settings.for_event(fake).mode != MODE_DISABLED:
                         index = 0
 
                         def replace_legacy(match):

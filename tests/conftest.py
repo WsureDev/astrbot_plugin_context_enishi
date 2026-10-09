@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from astrbot_plugin_channel_media_tools.platforms import Channels
 from astrbot_plugin_channel_media_tools.policy import MediaPolicy
 from astrbot_plugin_channel_media_tools.settings import Settings
-from astrbot_plugin_channel_media_tools.storage import Cache
+from astrbot_plugin_channel_media_tools.storage import CaptionCache
 
 
 class Event:
@@ -33,6 +33,7 @@ class Event:
         self.unified_msg_origin = f"{account}:GroupMessage:{chat}"
         self.plugins_name = None
         self.extra = {}
+        self.temporary_files = []
         self.client = SimpleNamespace(
             get_file=AsyncMock(), get_user_profile_photos=AsyncMock()
         )
@@ -56,6 +57,14 @@ class Event:
     def set_extra(self, key, value):
         self.extra[key] = value
 
+    def track_temporary_local_file(self, path):
+        self.temporary_files.append(Path(path))
+
+    def cleanup_temporary_local_files(self):
+        for path in self.temporary_files:
+            path.unlink(missing_ok=True)
+        self.temporary_files.clear()
+
 
 def text_factory(*, text):
     return {"type": "text", "text": text}
@@ -70,17 +79,30 @@ def image_bytes():
 
 @pytest.fixture
 def service(tmp_path, image_bytes):
-    config = {"default_mode": "A", "caption_provider_id": "vision", "channels": "{}"}
+    config = {
+        "channel_settings": [
+            {
+                "__template_key": "telegram",
+                "image_mode": "reference_only",
+                "caption_provider_id": "vision",
+            },
+            {
+                "__template_key": "qq",
+                "image_mode": "reference_only",
+                "caption_provider_id": "vision",
+            },
+        ]
+    }
     settings = Settings(config)
-    cache = Cache(tmp_path / "data", tmp_path / "temp", 3600, 1024 * 1024)
+    cache = CaptionCache(tmp_path / "data")
     context = SimpleNamespace(
         get_config=lambda **kw: {},
         llm_generate=AsyncMock(
             return_value=SimpleNamespace(completion_text="蓝色背景，文字为示例")
         ),
     )
-    channels = Channels(context, settings, cache, [tmp_path / "temp"])
-    policy = MediaPolicy(context, settings, channels, text_factory)
+    channels = Channels(context, settings, [tmp_path / "temp"])
+    policy = MediaPolicy(context, settings, channels, text_factory, cache)
     event = Event(
         raw={
             "message": {
@@ -110,6 +132,7 @@ def service(tmp_path, image_bytes):
         tmp=tmp_path,
     )
     yield result
+    channels.release_transfers()
     cache.close()
 
 

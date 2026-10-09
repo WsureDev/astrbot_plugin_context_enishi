@@ -15,9 +15,9 @@ def owner(service):
         channels=service.channels,
         settings=service.settings,
         enabled_for_runner=lambda r: (
-            service.settings.for_event(r.run_context.context.event).mode != "off"
+            service.settings.for_event(r.run_context.context.event).mode != "disabled"
         ),
-        enabled_event=lambda e: service.settings.for_event(e).mode != "off",
+        enabled_event=lambda e: service.settings.for_event(e).mode != "disabled",
     )
 
 
@@ -149,7 +149,7 @@ async def test_telegram_id_preservation_is_event_metadata_not_index(service):
     converted = await Adapter().convert_message(update, None)
     assert converted.message[0]._channel_native_file_id == "native_album"
     assert converted.message[0]._channel_native_message_id == "12"
-    assert service.cache.db.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+    assert service.cache.db.execute("SELECT count(*) FROM captions").fetchone()[0] == 0
     integration.terminate()
     assert Adapter.convert_message is original
 
@@ -205,7 +205,9 @@ async def test_closing_wrapper_closes_underlying_step(service):
     integration.terminate()
 
 
-async def test_a_defers_core_caption_without_changing_shared_config(service):
+async def test_reference_only_defers_core_caption_without_changing_shared_config(
+    service,
+):
     from dataclasses import dataclass
 
     @dataclass
@@ -228,14 +230,14 @@ async def test_a_defers_core_caption_without_changing_shared_config(service):
     integration.terminate()
 
 
-async def test_b_keeps_core_caption_configuration(service):
+async def test_current_turn_keeps_core_caption_configuration(service):
     from dataclasses import dataclass
 
     @dataclass
     class Config:
         provider_settings: dict
 
-    service.config["default_mode"] = "B"
+    service.config["channel_settings"][0]["image_mode"] = "current_turn"
     original = AsyncMock()
     module = SimpleNamespace(_decorate_llm_request=original)
     config = Config({"default_image_caption_provider_id": "core-caption"})

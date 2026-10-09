@@ -16,8 +16,8 @@ from .integration import RunnerIntegration
 from .native import field
 from .platforms import ChannelError, Channels
 from .policy import MediaPolicy
-from .settings import Settings, platform_name
-from .storage import Cache
+from .settings import MODE_DISABLED, MODE_LABELS, Settings, platform_name
+from .storage import CaptionCache
 
 PLUGIN = "astrbot_plugin_channel_media_tools"
 
@@ -36,14 +36,11 @@ class ChannelMediaTools(Star):
     async def initialize(self):
         data = Path(StarTools.get_data_dir(PLUGIN))
         temporary = Path(get_astrbot_temp_path())
-        self.cache = Cache(
-            data,
-            temporary / PLUGIN,
-            self.settings.integer("cache_ttl_hours", 168, 1, 8760) * 3600,
-            self.settings.integer("max_cache_mb", 512, 20, 10240) * 1024 * 1024,
+        self.cache = CaptionCache(data)
+        self.channels = Channels(self.context, self.settings, [temporary])
+        self.policy = MediaPolicy(
+            self.context, self.settings, self.channels, TextPart, self.cache
         )
-        self.channels = Channels(self.context, self.settings, self.cache, [temporary])
-        self.policy = MediaPolicy(self.context, self.settings, self.channels, TextPart)
         try:
             self.integration.install(ToolLoopAgentRunner, FunctionToolExecutor)
             from astrbot.core import astr_main_agent
@@ -88,7 +85,7 @@ class ChannelMediaTools(Star):
             return False
         return (
             platform_name(event) in {"qq", "telegram"}
-            and self.settings.for_event(event).mode != "off"
+            and self.settings.for_event(event).mode != MODE_DISABLED
         )
 
     def enabled_for_runner(self, runner):
@@ -131,7 +128,7 @@ class ChannelMediaTools(Star):
 
     @filter.llm_tool(name="fetch_channel_image")
     async def fetch_channel_image(self, event: AstrMessageEvent, image_id: str) -> str:
-        """按渠道原生图片 ID 获取文件及元信息，供其他工具使用，不向主模型返回像素。
+        """每次从来源读取渠道原生图片 ID，提供本轮临时文件和元信息；不缓存原图，不向主模型返回像素。
 
         Args:
             image_id(string): 图片标记里的完整 ID，或当前渠道的原生文件 ID。
@@ -139,7 +136,14 @@ class ChannelMediaTools(Star):
         try:
             path, metadata = await self.channels.fetch_image(event, image_id)
             return json.dumps(
-                {"ok": True, "image_id": image_id, "path": str(path), **metadata},
+                {
+                    "ok": True,
+                    "image_id": image_id,
+                    "path": str(path),
+                    "temporary": True,
+                    "valid_for": "current_turn",
+                    **metadata,
+                },
                 ensure_ascii=False,
             )
         except (ChannelError, ValueError) as exc:
@@ -223,11 +227,15 @@ class ChannelMediaTools(Star):
     async def show_policy(self, event: AstrMessageEvent):
         selected = self.settings.for_event(event)
         yield event.plain_result(
-            f"platform={event.get_platform_id()}\nmode={selected.mode}\ncaption_provider={selected.caption_provider_id or '未配置'}"
+            f"渠道：{event.get_platform_id()}\n图片处理方式：{MODE_LABELS[selected.mode]}\n"
+            f"转述模型：{selected.caption_provider_id or '使用 AstrBot 图片转述模型'}\n"
+            f"备用转述模型：{', '.join(selected.caption_fallback_provider_ids) or '未选择'}"
         )
 
     async def terminate(self):
         self.flow.terminate()
         self.integration.terminate()
+        if self.channels is not None:
+            self.channels.release_transfers()
         if self.cache is not None:
             self.cache.close()

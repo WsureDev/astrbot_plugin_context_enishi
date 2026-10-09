@@ -5,6 +5,7 @@ import inspect
 from dataclasses import replace
 
 from .native import field
+from .settings import MODE_REFERENCE_ONLY
 
 
 class RunnerIntegration:
@@ -48,6 +49,10 @@ class RunnerIntegration:
                     and runner.done()
                 ):
                     await integration.owner.policy.finish(runner)
+                elif integration.active and runner.done():
+                    event = field(field(runner.run_context, "context"), "event")
+                    if event is not None:
+                        integration.owner.channels.release_transfers(event)
 
         wrapped_step._channel_media_owner = self
 
@@ -167,9 +172,12 @@ class RunnerIntegration:
         @functools.wraps(original)
         async def wrapped(event, req, plugin_context, config, provider=None):
             if integration.active and integration.owner.enabled_event(event):
-                if integration.owner.settings.for_event(event).mode == "A":
+                if (
+                    integration.owner.settings.for_event(event).mode
+                    == MODE_REFERENCE_ONLY
+                ):
                     # Core may eagerly caption before on_llm_request when the
-                    # main model lacks vision. A delegates that work to the
+                    # main model lacks vision. Reference-only mode delegates to the
                     # on-demand tool and its cache, using a request-local copy.
                     settings = config.provider_settings or plugin_context.get_config(
                         umo=event.unified_msg_origin

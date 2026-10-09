@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,8 @@ from .native import (
     telegram_images,
 )
 from .settings import Settings, platform_name, scope
-from .storage import Cache
+
+MAX_CAPTION_BYTES = 16 * 1024 * 1024
 
 
 class ChannelError(Exception):
@@ -32,16 +34,14 @@ class ChannelError(Exception):
 
 
 class Channels:
-    def __init__(
-        self, context: Any, settings: Settings, cache: Cache, local_roots: list[Path]
-    ):
+    def __init__(self, context: Any, settings: Settings, local_roots: list[Path]):
         self.context = context
         self.settings = settings
-        self.cache = cache
         self.local_roots = [p.resolve() for p in local_roots]
         self.timeout = settings.integer("request_timeout_seconds", 30, 1, 120)
-        self.max_bytes = settings.integer("max_download_mb", 20, 1, 100) * 1024 * 1024
+        self.max_bytes = 20 * 1024 * 1024
         self._locks = WeakValueDictionary()
+        self._transfers: dict[int, set[Path]] = {}
 
     def client(self, event: Any, telegram: bool = False):
         current = getattr(event, "client" if telegram else "bot", None)
@@ -243,7 +243,10 @@ class Channels:
             return "base64://" + encoded
         return value
 
-    async def bytes_from_source(self, source: str) -> bytes:
+    async def bytes_from_source(
+        self, source: str, max_bytes: int | None = None
+    ) -> bytes:
+        limit = self.max_bytes if max_bytes is None else max_bytes
         if not isinstance(source, str) or not source:
             raise ChannelError("image source is unavailable")
         if source.startswith("data:image/"):
@@ -252,8 +255,12 @@ class Channels:
             source = "base64://" + source.split(",", 1)[1]
         if source.startswith("base64://"):
             encoded = source[9:]
-            if len(encoded) > self.max_bytes * 4 // 3 + 8:
-                raise ChannelError("image exceeds the configured size limit")
+            if len(encoded) > limit * 4 // 3 + 8:
+                raise ChannelError(
+                    "图片大小达到或超过 16 MB，不进行模型转述"
+                    if max_bytes is not None
+                    else "image exceeds the size limit"
+                )
             try:
                 data = base64.b64decode(encoded, validate=True)
             except ValueError as exc:
@@ -270,12 +277,23 @@ class Channels:
                         raise ChannelError(
                             f"image download returned HTTP {response.status}"
                         )
+                    if (
+                        response.content_length is not None
+                        and response.content_length > limit
+                    ):
+                        raise ChannelError(
+                            "图片大小达到或超过 16 MB，不进行模型转述"
+                            if max_bytes is not None
+                            else "image exceeds the size limit"
+                        )
                     chunks, total = [], 0
                     async for chunk in response.content.iter_chunked(65536):
                         total += len(chunk)
-                        if total > self.max_bytes:
+                        if total > limit:
                             raise ChannelError(
-                                "image exceeds the configured size limit"
+                                "图片大小达到或超过 16 MB，不进行模型转述"
+                                if max_bytes is not None
+                                else "image exceeds the size limit"
                             )
                         chunks.append(chunk)
                     data = b"".join(chunks)
@@ -285,11 +303,23 @@ class Channels:
                 raise ChannelError(
                     "protocol returned a local path not shared with AstrBot"
                 )
-            if not path.is_file() or path.stat().st_size > self.max_bytes:
-                raise ChannelError("local image is missing or too large")
+            if not path.is_file():
+                raise ChannelError("local image is missing")
+            if path.stat().st_size > limit:
+                raise ChannelError(
+                    "图片大小达到或超过 16 MB，不进行模型转述"
+                    if max_bytes is not None
+                    else "image exceeds the size limit"
+                )
             data = path.read_bytes()
-        if not data or len(data) > self.max_bytes:
-            raise ChannelError("empty image or image exceeds the configured size limit")
+        if not data:
+            raise ChannelError("empty image")
+        if len(data) > limit:
+            raise ChannelError(
+                "图片大小达到或超过 16 MB，不进行模型转述"
+                if max_bytes is not None
+                else "image exceeds the size limit"
+            )
         return data
 
     @staticmethod
@@ -321,25 +351,24 @@ class Channels:
         ) as exc:
             raise ChannelError("invalid or unsafe image") from exc
 
-    async def fetch_image(self, event: Any, value: str) -> tuple[Path, dict]:
+    async def read_image(
+        self, event: Any, value: str, max_bytes: int | None = None
+    ) -> tuple[bytes, dict]:
         ref = ImageRef.parse(value, event)
+        limit = self.max_bytes if max_bytes is None else max_bytes
         key = ref.uri
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
-            cached = self.cache.file(key)
-            if cached:
-                return cached, self.image_metadata(cached.read_bytes())
             try:
                 if ref.platform == "telegram":
                     media = await self.telegram_call(
                         event, "get_file", file_id=ref.native_id
                     )
-                    if (
-                        field(media, "file_size", 0)
-                        and media.file_size > self.max_bytes
-                    ):
+                    if field(media, "file_size", 0) and media.file_size > limit:
                         raise ChannelError(
-                            "Telegram image exceeds the configured size limit"
+                            "图片大小达到或超过 16 MB，不进行模型转述"
+                            if max_bytes is not None
+                            else "Telegram image exceeds the size limit"
                         )
                     data = bytes(
                         await asyncio.wait_for(
@@ -360,23 +389,49 @@ class Channels:
                         )
                         if field(result, "base64"):
                             source = "base64://" + result["base64"]
-                    data = await self.bytes_from_source(source)
+                    data = await self.bytes_from_source(source, max_bytes=max_bytes)
                 else:
                     raise ChannelError("this platform has no native image adapter")
-                metadata = self.image_metadata(data)
-                path = self.cache.save_file(
-                    key,
-                    data,
-                    metadata["extension"],
-                    ttl_seconds=3600 if ref.kind == "avatar" else None,
-                )
-                return path, metadata
+                if len(data) > limit:
+                    raise ChannelError(
+                        "图片大小达到或超过 16 MB，不进行模型转述"
+                        if max_bytes is not None
+                        else "image exceeds the size limit"
+                    )
+                return data, self.image_metadata(data)
             except ChannelError:
                 raise
             except Exception as exc:
                 raise ChannelError(
                     f"native image retrieval failed ({type(exc).__name__})"
                 ) from exc
+
+    async def fetch_image(self, event: Any, value: str) -> tuple[Path, dict]:
+        """Materialize a fresh transfer file for this turn, with no reuse cache."""
+        data, metadata = await self.read_image(event, value)
+        if not self.local_roots:
+            raise ChannelError("temporary file directory is unavailable")
+        directory = self.local_roots[0]
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=directory,
+            prefix="channel_media_transfer_",
+            suffix=metadata["extension"],
+            delete=False,
+        ) as output:
+            output.write(data)
+            path = Path(output.name)
+        self._transfers.setdefault(id(event), set()).add(path)
+        tracker = getattr(event, "track_temporary_local_file", None)
+        if callable(tracker):
+            tracker(str(path))
+        return path, metadata
+
+    def release_transfers(self, event: Any = None):
+        keys = [id(event)] if event is not None else list(self._transfers)
+        for key in keys:
+            for path in self._transfers.pop(key, set()):
+                path.unlink(missing_ok=True)
 
     async def user_avatar(self, event: Any, user_id: str) -> ImageRef:
         user_id = user_id or str(event.get_sender_id())

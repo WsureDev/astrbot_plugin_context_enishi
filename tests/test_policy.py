@@ -11,13 +11,13 @@ from astrbot_plugin_channel_media_tools.platforms import ChannelError
 from .conftest import image_count, picture, request, runner
 
 
-async def test_a_current_and_unseen_quote_only_have_native_ids(service):
+async def test_reference_only_current_and_unseen_quote_only_have_native_ids(service):
     req = request(["current.png", "reply.png"])
     await service.policy.prepare_request(service.event, req)
     assert req.image_urls == []
     refs = req.extra_user_content_parts[-1]["text"]
     assert "native_current" in refs and "native_unseen_reply" in refs
-    assert service.cache.db.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+    assert service.cache.db.execute("SELECT count(*) FROM captions").fetchone()[0] == 0
     service.event.client.get_file.assert_not_called()
 
 
@@ -41,12 +41,12 @@ async def test_descriptions_are_cached_per_content_question_provider(service):
     await service.policy.describe_image(
         service.event, "native_unseen_reply", "文字是什么？"
     )
-    service.config["caption_provider_id"] = "another-vision"
+    service.config["channel_settings"][0]["caption_provider_id"] = "another-vision"
     await service.policy.describe_image(
         service.event, "native_unseen_reply", "文字是什么？"
     )
     assert service.context.llm_generate.await_count == 3
-    assert service.event.client.get_file.await_count == 1
+    assert service.event.client.get_file.await_count == 4
     assert service.context.llm_generate.call_args.kwargs["contexts"] == []
 
 
@@ -58,11 +58,13 @@ async def test_concurrent_image_and_caption_requests_do_not_duplicate(service):
         )
     )
     assert service.context.llm_generate.await_count == 1
-    assert service.event.client.get_file.await_count == 1
+    assert service.event.client.get_file.await_count == 5
     assert sum(r["cached"] for r in results) == 4
 
 
-async def test_a_removes_existing_and_tool_pixels_before_model(service, image_bytes):
+async def test_reference_only_removes_existing_and_tool_pixels_before_model(
+    service, image_bytes
+):
     url = "data:image/png;base64," + base64.b64encode(image_bytes).decode()
     run = runner(
         service.event,
@@ -87,8 +89,8 @@ async def test_a_removes_existing_and_tool_pixels_before_model(service, image_by
     assert "base64" not in str(run.run_context.messages)
 
 
-async def test_b_keeps_only_current_and_quote_then_saves_no_pixels(service):
-    service.config["default_mode"] = "B"
+async def test_current_turn_keeps_only_current_and_quote_then_saves_no_pixels(service):
+    service.config["channel_settings"][0]["image_mode"] = "current_turn"
     req = request(["current", "quote"])
     await service.policy.prepare_request(service.event, req)
     run = runner(
@@ -109,8 +111,8 @@ async def test_b_keeps_only_current_and_quote_then_saves_no_pixels(service):
     assert "native_unseen_reply" in str(run.run_context.messages)
 
 
-async def test_b_old_duplicate_of_current_picture_is_removed(service):
-    service.config["default_mode"] = "B"
+async def test_current_turn_old_duplicate_of_current_picture_is_removed(service):
+    service.config["channel_settings"][0]["image_mode"] = "current_turn"
     run = runner(
         service.event,
         request(["same"]),
@@ -123,8 +125,8 @@ async def test_b_old_duplicate_of_current_picture_is_removed(service):
     assert image_count(run.run_context.messages) == 1
 
 
-async def test_b_blocks_new_tool_images_in_subsequent_steps(service):
-    service.config["default_mode"] = "B"
+async def test_current_turn_blocks_new_tool_images_in_subsequent_steps(service):
+    service.config["channel_settings"][0]["image_mode"] = "current_turn"
     run = runner(
         service.event,
         request(["current"]),
@@ -139,8 +141,8 @@ async def test_b_blocks_new_tool_images_in_subsequent_steps(service):
     assert "tool-image" not in str(run.run_context.messages)
 
 
-async def test_off_has_no_image_changes_or_native_api_calls(service):
-    service.config["default_mode"] = "off"
+async def test_disabled_has_no_image_changes_or_native_api_calls(service):
+    service.config["channel_settings"][0]["image_mode"] = "disabled"
     req = request(["original"])
     run = runner(
         service.event, req, [{"role": "user", "content": [picture("original")]}]
@@ -154,8 +156,8 @@ async def test_off_has_no_image_changes_or_native_api_calls(service):
 
 
 async def test_missing_caption_model_does_not_fall_back_to_main_pixels(service):
-    service.config["caption_provider_id"] = ""
-    with pytest.raises(ChannelError, match="caption_provider_id"):
+    service.config["channel_settings"][0]["caption_provider_id"] = ""
+    with pytest.raises(ChannelError, match="图片转述模型"):
         await service.policy.describe_image(service.event, "native_current", "内容")
     service.context.llm_generate.assert_not_called()
 
@@ -168,16 +170,20 @@ async def test_final_payload_guard_filters_direct_follow_up_images(service):
     assert image_count(payload) == 0
 
 
-async def test_files_are_cached_but_ids_work_after_cache_loss(service):
+async def test_each_file_read_fetches_source_and_creates_distinct_transfer(service):
     ref = ImageRef("telegram", "bot", "-100#2", "image", "native_unseen_reply")
     first, _ = await service.channels.fetch_image(service.event, ref.uri)
-    first.unlink()
     second, _ = await service.channels.fetch_image(service.event, ref.uri)
-    assert second.is_file() and service.event.client.get_file.await_count == 2
+    assert first != second and first.is_file() and second.is_file()
+    assert service.event.client.get_file.await_count == 2
+    service.channels.release_transfers(service.event)
+    assert not first.exists() and not second.exists()
 
 
-async def test_b_does_not_admit_background_images_without_current_sources(service):
-    service.config["default_mode"] = "B"
+async def test_current_turn_does_not_admit_background_images_without_current_sources(
+    service,
+):
+    service.config["channel_settings"][0]["image_mode"] = "current_turn"
     service.event.message_obj.raw_message = "background result"
     run = runner(
         service.event,
@@ -188,8 +194,8 @@ async def test_b_does_not_admit_background_images_without_current_sources(servic
     assert image_count(run.run_context.messages) == 0
 
 
-async def test_b_drops_additional_provider_image_attachment_path(service):
-    service.config["default_mode"] = "B"
+async def test_current_turn_drops_additional_provider_image_attachment_path(service):
+    service.config["channel_settings"][0]["image_mode"] = "current_turn"
     req = request(["current"])
     req.extra_user_content_parts = [picture("foreign-extra")]
     await service.policy.prepare_request(service.event, req)

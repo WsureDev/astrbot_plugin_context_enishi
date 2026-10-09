@@ -1,21 +1,187 @@
 {
-  "default_mode": {
-    "type": "string", "description": "图片上下文模式：off/关、A（原生 ID＋按需转述）、B（仅当前及引用图片当轮直传）",
-    "options": ["off", "A", "B"], "default": "off"
+  "channel_settings": {
+    "type": "template_list",
+    "description": "渠道图片设置",
+    "hint": "先添加 QQ 或 Telegram 渠道，再配置该渠道的图片处理方式和转述模型。",
+    "default": [
+      {
+        "__template_key": "qq",
+        "image_mode": "disabled",
+        "caption_provider_id": "",
+        "caption_fallback_provider_ids": [],
+        "caption_cache_ttl_hours": 0,
+        "max_caption_chars": 4000,
+        "scope": {
+          "platform_id": "",
+          "chat_id": ""
+        }
+      },
+      {
+        "__template_key": "telegram",
+        "image_mode": "disabled",
+        "caption_provider_id": "",
+        "caption_fallback_provider_ids": [],
+        "caption_cache_ttl_hours": 0,
+        "max_caption_chars": 4000,
+        "scope": {
+          "platform_id": "",
+          "chat_id": ""
+        }
+      }
+    ],
+    "templates": {
+      "qq": {
+        "name": "QQ（NapCat）",
+        "hint": "QQ 渠道的图片上下文和转述设置。",
+        "items": {
+          "image_mode": {
+            "type": "string",
+            "description": "图片处理方式",
+            "options": [
+              "disabled",
+              "current_turn",
+              "reference_only"
+            ],
+            "labels": [
+              "关闭",
+              "仅本轮消息及引用允许图片内容",
+              "始终使用图片 ID 引用图片"
+            ],
+            "default": "disabled",
+            "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+          },
+          "caption_provider_id": {
+            "type": "string",
+            "description": "图片转述模型",
+            "_special": "select_provider",
+            "default": "",
+            "hint": "选择已在 AstrBot 配置的视觉模型；留空使用 AstrBot 的图片转述模型。"
+          },
+          "caption_fallback_provider_ids": {
+            "type": "list",
+            "description": "备用图片转述模型",
+            "items": {
+              "type": "string"
+            },
+            "_special": "select_providers",
+            "default": [],
+            "hint": "主转述模型失败、超时、不支持图片或返回空内容时，按选择顺序逐个回退。"
+          },
+          "caption_cache_ttl_hours": {
+            "type": "int",
+            "description": "转述结果有效期（小时）",
+            "default": 0,
+            "hint": "0 表示永不失效。仅保存转述文字；图片每次重新从来源读取，来源失效时读取失败。"
+          },
+          "max_caption_chars": {
+            "type": "int",
+            "description": "转述最大字符数",
+            "default": 4000
+          },
+          "scope": {
+            "type": "object",
+            "description": "适用范围（可选）",
+            "items": {
+              "platform_id": {
+                "type": "string",
+                "description": "限定机器人实例",
+                "default": "",
+                "hint": "留空应用该渠道全部机器人；需要分别配置同渠道机器人时，填写其平台实例 ID。"
+              },
+              "chat_id": {
+                "type": "string",
+                "description": "限定群或话题",
+                "default": "",
+                "hint": "留空应用全部会话；可填写 QQ 群号，或 TG 群号及 #话题编号。"
+              }
+            }
+          }
+        }
+      },
+      "telegram": {
+        "name": "Telegram",
+        "hint": "TG 渠道的图片上下文和转述设置。",
+        "items": {
+          "image_mode": {
+            "type": "string",
+            "description": "图片处理方式",
+            "options": [
+              "disabled",
+              "current_turn",
+              "reference_only"
+            ],
+            "labels": [
+              "关闭",
+              "仅本轮消息及引用允许图片内容",
+              "始终使用图片 ID 引用图片"
+            ],
+            "default": "disabled",
+            "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+          },
+          "caption_provider_id": {
+            "type": "string",
+            "description": "图片转述模型",
+            "_special": "select_provider",
+            "default": "",
+            "hint": "选择已在 AstrBot 配置的视觉模型；留空使用 AstrBot 的图片转述模型。"
+          },
+          "caption_fallback_provider_ids": {
+            "type": "list",
+            "description": "备用图片转述模型",
+            "items": {
+              "type": "string"
+            },
+            "_special": "select_providers",
+            "default": [],
+            "hint": "主转述模型失败、超时、不支持图片或返回空内容时，按选择顺序逐个回退。"
+          },
+          "caption_cache_ttl_hours": {
+            "type": "int",
+            "description": "转述结果有效期（小时）",
+            "default": 0,
+            "hint": "0 表示永不失效。仅保存转述文字；图片每次重新从来源读取，来源失效时读取失败。"
+          },
+          "max_caption_chars": {
+            "type": "int",
+            "description": "转述最大字符数",
+            "default": 4000
+          },
+          "scope": {
+            "type": "object",
+            "description": "适用范围（可选）",
+            "items": {
+              "platform_id": {
+                "type": "string",
+                "description": "限定机器人实例",
+                "default": "",
+                "hint": "留空应用该渠道全部机器人；需要分别配置同渠道机器人时，填写其平台实例 ID。"
+              },
+              "chat_id": {
+                "type": "string",
+                "description": "限定群或话题",
+                "default": "",
+                "hint": "留空应用全部会话；可填写 QQ 群号，或 TG 群号及 #话题编号。"
+              }
+            }
+          }
+        }
+      }
+    }
   },
-  "channels": {
-    "type": "text", "description": "渠道覆盖 JSON：qq/telegram → platform:平台实例ID → session:完整UMO，后者优先。每项可填写 mode、caption_provider_id。",
-    "default": "{}"
+  "request_timeout_seconds": {
+    "type": "int",
+    "description": "渠道读取超时（秒）",
+    "default": 30,
+    "hint": "转述模型的单个请求超时为此值的三倍。"
   },
-  "caption_provider_id": {
-    "type": "string", "description": "独立图片转述模型的 AstrBot provider ID，必须支持图片输入；可按渠道覆盖。未配置时返回明确错误，不把图片转交主模型。",
-    "default": ""
+  "max_history_results": {
+    "type": "int",
+    "description": "历史发言工具最大返回条数",
+    "default": 100
   },
-  "cache_ttl_hours": {"type": "int", "description": "按需获取的文件和图片转述缓存有效期（小时）", "default": 168},
-  "max_cache_mb": {"type": "int", "description": "图片文件缓存容量上限（MB）", "default": 512},
-  "max_download_mb": {"type": "int", "description": "单张图片下载上限（MB）", "default": 20},
-  "request_timeout_seconds": {"type": "int", "description": "渠道请求超时；转述模型超时为此值的三倍", "default": 30},
-  "max_caption_chars": {"type": "int", "description": "单次图片转述最大字符数", "default": 4000},
-  "max_history_results": {"type": "int", "description": "历史发言工具最大返回条数", "default": 100},
-  "max_history_pages": {"type": "int", "description": "历史发言工具每次最多扫描页数，每页 100 条", "default": 10}
+  "max_history_pages": {
+    "type": "int",
+    "description": "历史发言工具每次最多扫描页数，每页 100 条",
+    "default": 10
+  }
 }

@@ -109,16 +109,27 @@ def test_channel_override_precedence():
     event = Event()
     settings = Settings(
         {
-            "default_mode": "off",
-            "caption_provider_id": "fallback",
-            "channels": {
-                "telegram": {"mode": "A", "caption_provider_id": "tg"},
-                "platform:bot": "B",
-                "session:" + event.unified_msg_origin: "关",
-            },
+            "channel_settings": [
+                {
+                    "__template_key": "telegram",
+                    "image_mode": "reference_only",
+                    "caption_provider_id": "tg",
+                },
+                {
+                    "__template_key": "telegram",
+                    "image_mode": "current_turn",
+                    "scope": {"platform_id": "bot"},
+                },
+                {
+                    "__template_key": "telegram",
+                    "image_mode": "disabled",
+                    "caption_provider_id": "tg",
+                    "scope": {"platform_id": "bot", "chat_id": "-100#2"},
+                },
+            ]
         }
     )
-    assert settings.for_event(event).mode == "off"
+    assert settings.for_event(event).mode == "disabled"
     assert settings.for_event(event).caption_provider_id == "tg"
 
 
@@ -127,7 +138,18 @@ def test_background_event_inherits_real_platform_configuration():
     event.context_obj = SimpleNamespace(
         get_platform_inst=lambda p: SimpleNamespace(config={"type": "telegram"})
     )
-    assert Settings({"channels": {"telegram": "A"}}).for_event(event).mode == "A"
+    assert (
+        Settings(
+            {
+                "channel_settings": [
+                    {"__template_key": "telegram", "image_mode": "reference_only"}
+                ]
+            }
+        )
+        .for_event(event)
+        .mode
+        == "reference_only"
+    )
 
 
 def test_qq_cq_string_native_id_is_parsed():

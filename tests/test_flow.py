@@ -21,7 +21,7 @@ def make_owner(service, flow):
             get_registered_star=lambda n: SimpleNamespace(star_cls=flow)
         ),
         settings=service.settings,
-        enabled_event=lambda e: service.settings.for_event(e).mode != "off",
+        enabled_event=lambda e: service.settings.for_event(e).mode != "disabled",
     )
 
 
@@ -55,7 +55,7 @@ def test_legacy_qq_placeholder_can_use_message_id_without_index(service):
 
 
 def test_flow_off_does_not_change_existing_records(service):
-    service.config["default_mode"] = "off"
+    service.config["channel_settings"][0]["image_mode"] = "disabled"
     flow = Flow()
     integration = FlowIntegration(make_owner(service, flow))
     integration.reconcile()

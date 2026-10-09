@@ -1,7 +1,7 @@
 name: astrbot_plugin_channel_media_tools
 display_name: 渠道图片压缩与查询工具
 desc: 按渠道配置原生图片 ID、转述缓存和当轮视觉模式，提供历史发言、头像和群成员工具。
-version: v0.1.0
+version: v0.2.0
 author: WsureDev
 astrbot_version: ">=4.28.0"
 support_platforms:

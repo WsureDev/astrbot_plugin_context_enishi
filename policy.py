@@ -8,8 +8,15 @@ from typing import Any
 from weakref import WeakValueDictionary
 
 from .native import SourceImage, field
-from .platforms import ChannelError, Channels
-from .settings import Settings, scope
+from .platforms import MAX_CAPTION_BYTES, ChannelError, Channels
+from .settings import (
+    MODE_CURRENT_TURN,
+    MODE_DISABLED,
+    MODE_REFERENCE_ONLY,
+    Settings,
+    scope,
+)
+from .storage import CaptionCache
 
 CAPTION_SYSTEM = (
     "You describe an image for another assistant that cannot see it. "
@@ -30,12 +37,18 @@ class RunState:
 
 class MediaPolicy:
     def __init__(
-        self, context: Any, settings: Settings, channels: Channels, text_factory
+        self,
+        context: Any,
+        settings: Settings,
+        channels: Channels,
+        text_factory,
+        cache: CaptionCache,
     ):
         self.context = context
         self.settings = settings
         self.channels = channels
         self.text_factory = text_factory
+        self.cache = cache
         self._caption_locks = WeakValueDictionary()
 
     def state(self, event: Any, request: Any) -> RunState:
@@ -49,60 +62,89 @@ class MediaPolicy:
         return states[key]
 
     async def describe_bytes(self, event: Any, data: bytes, question: str) -> dict:
+        if len(data) >= MAX_CAPTION_BYTES:
+            raise ChannelError("图片大小达到或超过 16 MB，不进行模型转述")
         selected = self.settings.for_event(event)
         provider_id = selected.caption_provider_id
         if not provider_id:
-            raise ChannelError(
-                "configure caption_provider_id for this channel before describing images"
+            provider_id = str(
+                self.context.get_config(umo=event.unified_msg_origin)
+                .get("provider_settings", {})
+                .get("default_image_caption_provider_id", "")
+                or ""
             )
+        providers = tuple(
+            dict.fromkeys(
+                p for p in (provider_id, *selected.caption_fallback_provider_ids) if p
+            )
+        )
+        if not providers:
+            raise ChannelError("请选择图片转述模型，或先设置 AstrBot 的图片转述模型")
         metadata = self.channels.image_metadata(data)
         channel = str(event.get_platform_id()) + ":" + scope(event)
-        key = self.channels.cache.caption_key(
-            channel, data, provider_id, question, CAPTION_SYSTEM
-        )
+        key = self.cache.caption_key(channel, data, providers, question, CAPTION_SYSTEM)
         lock = self._caption_locks.setdefault(key, asyncio.Lock())
         async with lock:
-            cached = self.channels.cache.caption(key)
+            cached = self.cache.caption(key, selected.caption_cache_ttl_hours)
             if cached is not None:
-                return {
-                    "description": cached,
-                    "cached": True,
-                    "provider_id": provider_id,
-                }
+                return cached
             url = (
                 f"data:{metadata['mime_type']};base64,{base64.b64encode(data).decode()}"
             )
-            try:
-                response = await asyncio.wait_for(
-                    self.context.llm_generate(
-                        chat_provider_id=provider_id,
-                        prompt=question[:4000],
-                        image_urls=[url],
-                        system_prompt=CAPTION_SYSTEM,
-                        contexts=[],
-                    ),
-                    self.channels.timeout * 3,
-                )
-            except Exception as exc:
-                raise ChannelError(
-                    f"image description failed ({type(exc).__name__})"
-                ) from exc
-            text = str(field(response, "completion_text", "") or "").strip()
-            if not text:
-                raise ChannelError("the description model returned no text")
-            maximum = self.settings.integer("max_caption_chars", 4000, 100, 16000)
-            text = text[:maximum]
-            self.channels.cache.save_caption(key, text)
-            return {"description": text, "cached": False, "provider_id": provider_id}
+            failures = []
+            for provider_id in providers:
+                getter = getattr(self.context, "get_provider_by_id", None)
+                if callable(getter):
+                    try:
+                        provider = getter(provider_id)
+                    except Exception as exc:
+                        failures.append(f"{provider_id}: {type(exc).__name__}")
+                        continue
+                    if provider is None:
+                        failures.append(f"{provider_id}: 模型不存在")
+                        continue
+                    modalities = (getattr(provider, "provider_config", {}) or {}).get(
+                        "modalities"
+                    )
+                    if modalities and "image" not in modalities:
+                        failures.append(f"{provider_id}: 不支持图片输入")
+                        continue
+                try:
+                    response = await asyncio.wait_for(
+                        self.context.llm_generate(
+                            chat_provider_id=provider_id,
+                            prompt=question[:4000],
+                            image_urls=[url],
+                            system_prompt=CAPTION_SYSTEM,
+                            contexts=[],
+                        ),
+                        self.channels.timeout * 3,
+                    )
+                    text = str(field(response, "completion_text", "") or "").strip()
+                    if field(response, "role", "assistant") == "err" or not text:
+                        raise ChannelError("转述模型返回错误或空内容")
+                except Exception as exc:
+                    failures.append(f"{provider_id}: {type(exc).__name__}")
+                    continue
+                text = text[: selected.max_caption_chars]
+                self.cache.save_caption(key, text, provider_id)
+                return {
+                    "description": text,
+                    "cached": False,
+                    "provider_id": provider_id,
+                }
+            raise ChannelError("图片转述模型及备用模型均失败：" + "; ".join(failures))
 
     async def describe_image(self, event: Any, image_id: str, question: str) -> dict:
-        path, metadata = await self.channels.fetch_image(event, image_id)
-        result = await self.describe_bytes(event, path.read_bytes(), question)
+        data, metadata = await self.channels.read_image(
+            event, image_id, max_bytes=MAX_CAPTION_BYTES - 1
+        )
+        result = await self.describe_bytes(event, data, question)
         return {"image_id": image_id, **result, **metadata}
 
     async def prepare_request(self, event: Any, request: Any):
         state = self.state(event, request)
-        if state.mode == "off":
+        if state.mode == MODE_DISABLED:
             return
         state.sources = await self.channels.current_images(event)
         # IDs are parsed from this invocation, including remote replies. No
@@ -114,16 +156,17 @@ class MediaPolicy:
         request.extra_user_content_parts = [
             p for p in extras if field(p, "type") != "image_url"
         ]
-        if state.mode == "A":
+        if state.mode == MODE_REFERENCE_ONLY:
             request.image_urls = []
         instructions = (
             "\n[Channel media policy] Images are addressed by platform-native IDs. "
             "Use describe_channel_image to inspect an image through the description model. "
             "Use fetch_channel_image to obtain a local file for a downstream tool; pass its path explicitly. "
             "File retrieval does not place pixels in your context. "
+            "File paths are temporary for this turn; fetch again by native image ID in later turns. "
             + (
                 "Your context must contain no image pixels. "
-                if state.mode == "A"
+                if state.mode == MODE_REFERENCE_ONLY
                 else "Only images in the current message or its reachable quoted messages are visible this turn. "
             )
             + "For generation, use explicit reference_images paths and use_context_images=false; "
@@ -150,7 +193,7 @@ class MediaPolicy:
         if event is None:
             return
         state = self.state(event, runner.req)
-        if state.mode == "off":
+        if state.mode == MODE_DISABLED:
             return
         object.__setattr__(runner.run_context, "_channel_media_state", state)
         if not state.initialized:
@@ -168,7 +211,7 @@ class MediaPolicy:
                     for index, part in enumerate(pictures):
                         image = field(part, "image_url", {})
                         url = field(image, "url", "")
-                        if state.mode == "B" and url and state.sources:
+                        if state.mode == MODE_CURRENT_TURN and url and state.sources:
                             state.allowed_urls.add(url)
                             state.current_parts.add(id(part))
                             if hasattr(part, "mark_as_temp"):
@@ -189,7 +232,7 @@ class MediaPolicy:
         await self.rewrite_messages(event, runner.run_context.messages, state)
         state.scrubbed = True
         # Clear a second provider-facing attachment path as well as messages.
-        if state.mode == "A":
+        if state.mode == MODE_REFERENCE_ONLY:
             runner.req.image_urls = []
         runner.req.extra_user_content_parts = [
             p
@@ -218,16 +261,18 @@ class MediaPolicy:
                     if not state.scrubbed
                     else url in state.allowed_urls
                 )
-                if state.mode == "B" and not persist and current_part:
+                if state.mode == MODE_CURRENT_TURN and not persist and current_part:
                     if hasattr(part, "mark_as_temp"):
                         part.mark_as_temp()
                     output.append(part)
                     if not any(marker == self._text(p) for p in parts):
                         output.append(self.text_factory(text=marker))
                     continue
-                if state.mode == "A" and tool_message and not persist:
+                if state.mode == MODE_REFERENCE_ONLY and tool_message and not persist:
                     try:
-                        data = await self.channels.bytes_from_source(url)
+                        data = await self.channels.bytes_from_source(
+                            url, max_bytes=MAX_CAPTION_BYTES - 1
+                        )
                         description = await self.describe_bytes(
                             event,
                             data,
@@ -252,16 +297,17 @@ class MediaPolicy:
         if event is None:
             return
         state = self.state(event, runner.req)
-        if state.mode != "off":
+        if state.mode != MODE_DISABLED:
             await self.rewrite_messages(
                 event, runner.run_context.messages, state, persist=True
             )
+        self.channels.release_transfers(event)
 
     async def finish_context(self, event: Any, run_context: Any):
         state = getattr(run_context, "_channel_media_state", None)
         if state is None:
             state = RunState(self.settings.for_event(event).mode)
-        if state.mode != "off":
+        if state.mode != MODE_DISABLED:
             await self.rewrite_messages(
                 event, run_context.messages, state, persist=True
             )
@@ -272,7 +318,7 @@ class MediaPolicy:
         if event is None:
             return payload
         state = self.state(event, runner.req)
-        if state.mode == "off":
+        if state.mode == MODE_DISABLED:
             return payload
         output = []
         for message in payload:
@@ -284,7 +330,10 @@ class MediaPolicy:
                 for part in parts:
                     if field(part, "type") == "image_url":
                         url = field(field(part, "image_url", {}), "url", "")
-                        if state.mode == "B" and url in state.allowed_urls:
+                        if (
+                            state.mode == MODE_CURRENT_TURN
+                            and url in state.allowed_urls
+                        ):
                             filtered.append(part)
                         else:
                             filtered.append(
