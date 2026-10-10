@@ -11,103 +11,74 @@ from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunne
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
-from .flow import FlowIntegration
-from .identity import PLUGIN, caption_data_directory
-from .integration import RunnerIntegration
-from .native import field
-from .platforms import ChannelError, Channels
-from .policy import MediaPolicy
-from .settings import MODE_DISABLED, MODE_LABELS, Settings, platform_name
-from .storage import CaptionCache
+from .awareness.service import ChatAwareness
+from .channels.native import field
+from .channels.transport import ChannelError
+from .context.additions import append_temporary_text
+from .context.service import ContextOrganizer
+from .identity import PLUGIN
+from .settings import MODE_LABELS, Settings, migrate_channel_settings, platform_name
 
 
-class ContextManagerPlugin(Star):
+class EnishiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.context = context
+        if migrate_channel_settings(config):
+            save = getattr(config, "save_config", None)
+            if callable(save):
+                save()
         self.settings = Settings(config)
-        self.cache = None
-        self.channels = None
-        self.policy = None
-        self.integration = RunnerIntegration(self)
-        self.flow = FlowIntegration(self)
+        self.organizer = ContextOrganizer(context, self.settings, self.participates)
+        self.awareness = ChatAwareness(context, self.settings, self.participates)
 
     async def initialize(self):
         data = Path(StarTools.get_data_dir(PLUGIN))
         temporary = Path(get_astrbot_temp_path())
-        self.cache = CaptionCache(caption_data_directory(data))
-        self.channels = Channels(self.context, self.settings, [temporary])
-        self.policy = MediaPolicy(
-            self.context, self.settings, self.channels, TextPart, self.cache
+        await self.organizer.initialize(
+            data, temporary, TextPart, ToolLoopAgentRunner, FunctionToolExecutor
         )
-        try:
-            self.integration.install(ToolLoopAgentRunner, FunctionToolExecutor)
-            from astrbot.core import astr_main_agent
-
-            self.integration.defer_builtin_caption(astr_main_agent)
-            try:
-                from astrbot.core.platform.sources.telegram.tg_adapter import (
-                    TelegramPlatformAdapter,
-                )
-
-                self.integration.preserve_telegram_ids(TelegramPlatformAdapter)
-            except ImportError:
-                logger.info("[%s] Telegram adapter is not installed", PLUGIN)
-            self.flow.reconcile()
-        except BaseException:
-            self.flow.terminate()
-            self.integration.terminate()
-            self.cache.close()
-            self.cache = None
-            raise
-        logger.info(
-            "[%s] initialized; no incoming-image index or reception hook", PLUGIN
-        )
+        logger.info("[%s] context organization and chat awareness initialized", PLUGIN)
 
     @filter.on_astrbot_loaded()
     async def attach_flow(self):
-        self.flow.reconcile()
+        self.organizer.flow.reconcile()
 
     @filter.on_plugin_loaded()
     async def attach_loaded_flow(self, metadata):
         if field(metadata, "name", metadata) == "astrbot_plugin_group_context_flow":
-            self.flow.reconcile()
+            self.organizer.flow.reconcile()
 
     @filter.on_plugin_unloaded()
     async def detach_unloaded_flow(self, metadata):
         if field(metadata, "name", metadata) == "astrbot_plugin_group_context_flow":
-            self.flow.terminate()
+            self.organizer.flow.terminate()
 
-    def enabled_event(self, event):
+    def participates(self, event):
         plugins = getattr(event, "plugins_name", None)
         if plugins is not None and PLUGIN not in plugins:
             return False
-        return (
-            platform_name(event) in {"qq", "telegram"}
-            and self.settings.for_event(event).mode != MODE_DISABLED
-        )
-
-    def enabled_for_runner(self, runner):
-        event = field(field(runner.run_context, "context"), "event")
-        return event is not None and self.enabled_event(event)
+        return platform_name(event) in {"qq", "telegram"}
 
     @filter.on_llm_request(priority=-2_147_483_647)
     async def prepare_media(self, event: AstrMessageEvent, request):
-        if self.enabled_event(event):
-            await self.policy.prepare_request(event, request)
+        await self.organizer.prepare_request(event, request)
+        hint = await self.awareness.request_hint(event)
+        if hint is not None:
+            append_temporary_text(request, hint, self.awareness.HINT_PREFIX, TextPart)
 
     @filter.on_agent_done(priority=-2_147_483_647)
     async def remove_persistent_pixels(
         self, event: AstrMessageEvent, run_context, response
     ):
-        if self.enabled_event(event):
+        if self.organizer.enabled_event(event):
             # The state-transition guard covers error and aborted completion.
-            await self.policy.finish_context(event, run_context)
+            await self.organizer.policy.finish_context(event, run_context)
 
     @filter.on_using_llm_tool(priority=-2_147_483_647)
     async def reserve_background_images(self, event: AstrMessageEvent, tool, tool_args):
-        if self.enabled_event(event):
-            self.integration.prepare_background_call(event, tool, tool_args)
+        if self.organizer.enabled_event(event):
+            self.organizer.integration.prepare_background_call(event, tool, tool_args)
 
     @filter.llm_tool(name="describe_channel_image")
     async def describe_channel_image(
@@ -124,7 +95,7 @@ class ContextManagerPlugin(Star):
         """
         try:
             return json.dumps(
-                await self.policy.describe_image(event, image_id, question),
+                await self.organizer.policy.describe_image(event, image_id, question),
                 ensure_ascii=False,
             )
         except (ChannelError, ValueError) as exc:
@@ -138,7 +109,7 @@ class ContextManagerPlugin(Star):
             image_id(string): 图片标记里的完整 ID，或当前渠道的原生文件 ID。
         """
         try:
-            path, metadata = await self.channels.fetch_image(event, image_id)
+            path, metadata = await self.organizer.channels.fetch_image(event, image_id)
             return json.dumps(
                 {
                     "ok": True,
@@ -171,8 +142,9 @@ class ContextManagerPlugin(Star):
             before_id(string): QQ 分页游标；TG 的本地历史记录 ID，不是 Telegram 消息 ID。
         """
         try:
+            self.awareness.require_enabled(event)
             return json.dumps(
-                await self.channels.user_history(
+                await self.awareness.sources.user_history(
                     event, user_id, limit, days, before_id
                 ),
                 ensure_ascii=False,
@@ -190,7 +162,8 @@ class ContextManagerPlugin(Star):
             user_id(string): 渠道原生用户 ID，留空使用当前发言者。
         """
         try:
-            ref = await self.channels.user_avatar(event, user_id)
+            self.awareness.require_enabled(event)
+            ref = await self.awareness.sources.user_avatar(event, user_id)
             return json.dumps({"ok": True, "image_id": ref.uri}, ensure_ascii=False)
         except (ChannelError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -205,8 +178,10 @@ class ContextManagerPlugin(Star):
             message_id(string): 渠道原生消息 ID，不是 AstrBot 本地历史记录 ID。
         """
         try:
+            self.awareness.require_enabled(event)
             return json.dumps(
-                await self.channels.message(event, message_id), ensure_ascii=False
+                await self.awareness.sources.message(event, message_id),
+                ensure_ascii=False,
             )
         except (ChannelError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -221,8 +196,10 @@ class ContextManagerPlugin(Star):
             user_id(string): 渠道原生用户 ID，留空使用当前发言者。
         """
         try:
+            self.awareness.require_enabled(event)
             return json.dumps(
-                await self.channels.member_info(event, user_id), ensure_ascii=False
+                await self.awareness.sources.member_info(event, user_id),
+                ensure_ascii=False,
             )
         except (ChannelError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -236,10 +213,61 @@ class ContextManagerPlugin(Star):
             f"备用转述模型：{', '.join(selected.caption_fallback_provider_ids) or '未选择'}"
         )
 
+    @filter.llm_tool(name="get_group_participants")
+    async def get_group_participants(
+        self,
+        event: AstrMessageEvent,
+        order: str = "recent",
+        limit: int = 30,
+        hours: float = 24,
+        start_time: str = "",
+        end_time: str = "",
+    ) -> str:
+        """查询当前群的人员名单，默认按最近发言顺序；可按时段内观察到的发言数排序。
+
+        QQ 使用 NapCat 成员快照与协议可读历史；TG 使用已有本地记录和当前消息，
+        不能枚举全部群成员。统计受扫描预算限制，observed_messages 是已观察到的
+        次数，不是完整发言数；结合 membership_complete、activity 和 coverage 使用。
+
+        Args:
+            order(string): recent 按最近发言，frequency 按时段发言次数从多到少。
+            limit(number): 返回人数，默认 30，受当前渠道最大返回人数设置限制。
+            hours(number): frequency 默认回溯 24 小时；显式起始时间优先。
+            start_time(string): 可选 Unix 秒字符串或含时区的 ISO 8601 起始时间。
+            end_time(string): 可选结束时间，格式同上；默认当前时间，不可使用未来时间。
+        """
+        try:
+            return json.dumps(
+                await self.awareness.participants(
+                    event,
+                    order=order,
+                    limit=limit,
+                    hours=hours,
+                    start_time=start_time,
+                    end_time=end_time,
+                ),
+                ensure_ascii=False,
+            )
+        except (ChannelError, ValueError, TypeError) as exc:
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
+    @filter.llm_tool(name="get_chat_environment")
+    async def get_chat_environment(
+        self, event: AstrMessageEvent, limit: int = 8
+    ) -> str:
+        """按需查询当前聊天环境：群名、当前发言者、引用对象及少量最近活跃人员。
+
+        数据仅来自当前渠道。TG 人员范围为已有记录中观察到的发言者，不是完整群名单。
+
+        Args:
+            limit(number): 最多列出多少位最近活跃人员，默认 8。
+        """
+        try:
+            return json.dumps(
+                await self.awareness.environment(event, limit), ensure_ascii=False
+            )
+        except (ChannelError, ValueError, TypeError) as exc:
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
     async def terminate(self):
-        self.flow.terminate()
-        self.integration.terminate()
-        if self.channels is not None:
-            self.channels.release_transfers(preserve_consumers=True)
-        if self.cache is not None:
-            self.cache.close()
+        self.organizer.close()

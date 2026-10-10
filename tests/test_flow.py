@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from astrbot_plugin_context_manager.flow import FlowIntegration
+from astrbot_plugin_context_enishi.context.flow import FlowIntegration
 
 from .conftest import Event
 

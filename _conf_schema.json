@@ -2,15 +2,25 @@
   "channel_settings": {
     "type": "template_list",
     "description": "渠道上下文设置",
-    "hint": "先添加 QQ 或 Telegram 渠道，再配置该渠道的上下文策略；当前支持图片处理方式和转述模型。",
+    "hint": "先选择 QQ 或 Telegram，再分别设置上下文整理、聊天感知增强及适用范围。",
     "default": [
       {
         "__template_key": "qq",
-        "image_mode": "disabled",
-        "caption_provider_id": "",
-        "caption_fallback_provider_ids": [],
-        "caption_cache_ttl_hours": 0,
-        "max_caption_chars": 4000,
+        "context": {
+          "image_mode": "disabled",
+          "caption_provider_id": "",
+          "caption_fallback_provider_ids": [],
+          "caption_cache_ttl_hours": 0,
+          "max_caption_chars": 4000
+        },
+        "awareness": {
+          "enabled": true,
+          "inject_environment": false,
+          "summary_members": 8,
+          "summary_max_chars": 1600,
+          "max_participants": 100,
+          "scan_pages": 10
+        },
         "scope": {
           "platform_id": "",
           "chat_id": ""
@@ -18,11 +28,21 @@
       },
       {
         "__template_key": "telegram",
-        "image_mode": "disabled",
-        "caption_provider_id": "",
-        "caption_fallback_provider_ids": [],
-        "caption_cache_ttl_hours": 0,
-        "max_caption_chars": 4000,
+        "context": {
+          "image_mode": "disabled",
+          "caption_provider_id": "",
+          "caption_fallback_provider_ids": [],
+          "caption_cache_ttl_hours": 0,
+          "max_caption_chars": 4000
+        },
+        "awareness": {
+          "enabled": true,
+          "inject_environment": false,
+          "summary_members": 8,
+          "summary_max_chars": 1600,
+          "max_participants": 100,
+          "scan_pages": 10
+        },
         "scope": {
           "platform_id": "",
           "chat_id": ""
@@ -32,51 +52,101 @@
     "templates": {
       "qq": {
         "name": "QQ（NapCat）",
-        "hint": "QQ 渠道的图片上下文和转述设置。",
+        "hint": "分别配置上下文整理与聊天感知增强，两类功能互相独立。",
         "items": {
-          "image_mode": {
-            "type": "string",
-            "description": "图片处理方式",
-            "options": [
-              "disabled",
-              "current_turn",
-              "reference_only"
-            ],
-            "labels": [
-              "关闭",
-              "仅本轮消息及引用允许图片内容",
-              "始终使用图片 ID 引用图片"
-            ],
-            "default": "disabled",
-            "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
-          },
-          "caption_provider_id": {
-            "type": "string",
-            "description": "图片转述模型",
-            "_special": "select_provider",
-            "default": "",
-            "hint": "选择已在 AstrBot 配置的视觉模型；留空使用 AstrBot 的图片转述模型。"
-          },
-          "caption_fallback_provider_ids": {
-            "type": "list",
-            "description": "备用图片转述模型",
+          "context": {
+            "type": "object",
+            "description": "上下文整理",
+            "hint": "控制图片进入主模型和历史的方式，并管理转述与临时文件。",
             "items": {
-              "type": "string"
-            },
-            "_special": "select_providers",
-            "default": [],
-            "hint": "主转述模型失败、超时、不支持图片或返回空内容时，按选择顺序逐个回退。"
+              "image_mode": {
+                "type": "string",
+                "description": "图片处理方式",
+                "options": [
+                  "disabled",
+                  "current_turn",
+                  "reference_only"
+                ],
+                "labels": [
+                  "关闭",
+                  "仅本轮消息及引用允许图片内容",
+                  "始终使用图片 ID 引用图片"
+                ],
+                "default": "disabled",
+                "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+              },
+              "caption_provider_id": {
+                "type": "string",
+                "description": "图片转述模型",
+                "_special": "select_provider",
+                "default": "",
+                "hint": "选择已在 AstrBot 配置的视觉模型；留空使用 AstrBot 的图片转述模型。"
+              },
+              "caption_fallback_provider_ids": {
+                "type": "list",
+                "description": "备用图片转述模型",
+                "items": {
+                  "type": "string"
+                },
+                "_special": "select_providers",
+                "default": [],
+                "hint": "主转述模型失败、超时、不支持图片或返回空内容时，按选择顺序逐个回退。"
+              },
+              "caption_cache_ttl_hours": {
+                "type": "int",
+                "description": "转述结果有效期（小时）",
+                "default": 0,
+                "hint": "0 表示永不失效。仅保存转述文字；图片每次重新从来源读取，来源失效时读取失败。"
+              },
+              "max_caption_chars": {
+                "type": "int",
+                "description": "转述最大字符数",
+                "default": 4000
+              }
+            }
           },
-          "caption_cache_ttl_hours": {
-            "type": "int",
-            "description": "转述结果有效期（小时）",
-            "default": 0,
-            "hint": "0 表示永不失效。仅保存转述文字；图片每次重新从来源读取，来源失效时读取失败。"
-          },
-          "max_caption_chars": {
-            "type": "int",
-            "description": "转述最大字符数",
-            "default": 4000
+          "awareness": {
+            "type": "object",
+            "description": "聊天感知增强",
+            "hint": "查询成员与聊天环境；默认只提供工具，不自动加入主模型上下文。",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "启用聊天感知工具",
+                "default": true,
+                "hint": "提供群聊人员、聊天环境、历史发言、消息、头像及成员查询，不依赖图片管理模式。"
+              },
+              "inject_environment": {
+                "type": "bool",
+                "description": "自动附加聊天环境摘要",
+                "default": false,
+                "hint": "默认关闭，仅通过工具按需查询。开启后在当前主模型请求中附上少量环境资料，不修改历史或人格提示词。"
+              },
+              "summary_members": {
+                "type": "int",
+                "description": "环境摘要最多列出人数",
+                "default": 8,
+                "hint": "仅影响自动摘要，范围 1–30，按最近发言顺序。"
+              },
+              "summary_max_chars": {
+                "type": "int",
+                "description": "环境摘要最大字符数",
+                "default": 1600,
+                "hint": "仅影响自动摘要，范围 256–8192，名单按长度预算裁剪。"
+              },
+              "max_participants": {
+                "type": "int",
+                "description": "人员名单最大返回人数",
+                "default": 100,
+                "hint": "范围 1–500；超过时返回截断标记，发言频次仍扫描整个允许时段。"
+              },
+              "scan_pages": {
+                "type": "int",
+                "description": "人员活跃度最多扫描页数",
+                "default": 10,
+                "hint": "每页最多 100 条，仅限制新人员名单统计。原有历史发言工具限额保持不变。"
+              }
+            }
           },
           "scope": {
             "type": "object",
@@ -100,51 +170,101 @@
       },
       "telegram": {
         "name": "Telegram",
-        "hint": "TG 渠道的图片上下文和转述设置。",
+        "hint": "分别配置上下文整理与聊天感知增强，两类功能互相独立。",
         "items": {
-          "image_mode": {
-            "type": "string",
-            "description": "图片处理方式",
-            "options": [
-              "disabled",
-              "current_turn",
-              "reference_only"
-            ],
-            "labels": [
-              "关闭",
-              "仅本轮消息及引用允许图片内容",
-              "始终使用图片 ID 引用图片"
-            ],
-            "default": "disabled",
-            "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
-          },
-          "caption_provider_id": {
-            "type": "string",
-            "description": "图片转述模型",
-            "_special": "select_provider",
-            "default": "",
-            "hint": "选择已在 AstrBot 配置的视觉模型；留空使用 AstrBot 的图片转述模型。"
-          },
-          "caption_fallback_provider_ids": {
-            "type": "list",
-            "description": "备用图片转述模型",
+          "context": {
+            "type": "object",
+            "description": "上下文整理",
+            "hint": "控制图片进入主模型和历史的方式，并管理转述与临时文件。",
             "items": {
-              "type": "string"
-            },
-            "_special": "select_providers",
-            "default": [],
-            "hint": "主转述模型失败、超时、不支持图片或返回空内容时，按选择顺序逐个回退。"
+              "image_mode": {
+                "type": "string",
+                "description": "图片处理方式",
+                "options": [
+                  "disabled",
+                  "current_turn",
+                  "reference_only"
+                ],
+                "labels": [
+                  "关闭",
+                  "仅本轮消息及引用允许图片内容",
+                  "始终使用图片 ID 引用图片"
+                ],
+                "default": "disabled",
+                "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+              },
+              "caption_provider_id": {
+                "type": "string",
+                "description": "图片转述模型",
+                "_special": "select_provider",
+                "default": "",
+                "hint": "选择已在 AstrBot 配置的视觉模型；留空使用 AstrBot 的图片转述模型。"
+              },
+              "caption_fallback_provider_ids": {
+                "type": "list",
+                "description": "备用图片转述模型",
+                "items": {
+                  "type": "string"
+                },
+                "_special": "select_providers",
+                "default": [],
+                "hint": "主转述模型失败、超时、不支持图片或返回空内容时，按选择顺序逐个回退。"
+              },
+              "caption_cache_ttl_hours": {
+                "type": "int",
+                "description": "转述结果有效期（小时）",
+                "default": 0,
+                "hint": "0 表示永不失效。仅保存转述文字；图片每次重新从来源读取，来源失效时读取失败。"
+              },
+              "max_caption_chars": {
+                "type": "int",
+                "description": "转述最大字符数",
+                "default": 4000
+              }
+            }
           },
-          "caption_cache_ttl_hours": {
-            "type": "int",
-            "description": "转述结果有效期（小时）",
-            "default": 0,
-            "hint": "0 表示永不失效。仅保存转述文字；图片每次重新从来源读取，来源失效时读取失败。"
-          },
-          "max_caption_chars": {
-            "type": "int",
-            "description": "转述最大字符数",
-            "default": 4000
+          "awareness": {
+            "type": "object",
+            "description": "聊天感知增强",
+            "hint": "查询成员与聊天环境；默认只提供工具，不自动加入主模型上下文。",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "启用聊天感知工具",
+                "default": true,
+                "hint": "提供群聊人员、聊天环境、历史发言、消息、头像及成员查询，不依赖图片管理模式。"
+              },
+              "inject_environment": {
+                "type": "bool",
+                "description": "自动附加聊天环境摘要",
+                "default": false,
+                "hint": "默认关闭，仅通过工具按需查询。开启后在当前主模型请求中附上少量环境资料，不修改历史或人格提示词。"
+              },
+              "summary_members": {
+                "type": "int",
+                "description": "环境摘要最多列出人数",
+                "default": 8,
+                "hint": "仅影响自动摘要，范围 1–30，按最近发言顺序。"
+              },
+              "summary_max_chars": {
+                "type": "int",
+                "description": "环境摘要最大字符数",
+                "default": 1600,
+                "hint": "仅影响自动摘要，范围 256–8192，名单按长度预算裁剪。"
+              },
+              "max_participants": {
+                "type": "int",
+                "description": "人员名单最大返回人数",
+                "default": 100,
+                "hint": "范围 1–500；超过时返回截断标记，发言频次仍扫描整个允许时段。"
+              },
+              "scan_pages": {
+                "type": "int",
+                "description": "人员活跃度最多扫描页数",
+                "default": 10,
+                "hint": "每页最多 100 条，仅限制新人员名单统计。原有历史发言工具限额保持不变。"
+              }
+            }
           },
           "scope": {
             "type": "object",

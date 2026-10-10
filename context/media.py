@@ -7,9 +7,9 @@ from dataclasses import field as dataclass_field
 from typing import Any
 from weakref import WeakValueDictionary
 
-from .native import SourceImage, field
-from .platforms import MAX_CAPTION_BYTES, ChannelError, Channels
-from .settings import (
+from ..channels.media import MAX_CAPTION_BYTES, ChannelError, MediaSources
+from ..channels.native import SourceImage, field
+from ..settings import (
     MODE_CURRENT_TURN,
     MODE_DISABLED,
     MODE_REFERENCE_ONLY,
@@ -40,7 +40,7 @@ class MediaPolicy:
         self,
         context: Any,
         settings: Settings,
-        channels: Channels,
+        channels: MediaSources,
         text_factory,
         cache: CaptionCache,
     ):

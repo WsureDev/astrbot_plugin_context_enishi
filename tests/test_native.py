@@ -4,12 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_context_manager.native import (
+from astrbot_plugin_context_enishi.channels.native import (
     ImageRef,
     qq_images,
     telegram_images,
 )
-from astrbot_plugin_context_manager.settings import Settings
+from astrbot_plugin_context_enishi.settings import Settings
 
 from .conftest import Event
 

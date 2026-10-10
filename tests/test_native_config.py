@@ -70,5 +70,6 @@ def test_schema_defaults_and_save_validate_with_actual_astrbot_code():
     )
     assert errors == []
     assert len(validated["channel_settings"]) == 2
-    assert validated["channel_settings"][0]["image_mode"] == "disabled"
-    assert validated["channel_settings"][1]["caption_cache_ttl_hours"] == 0
+    assert validated["channel_settings"][0]["context"]["image_mode"] == "disabled"
+    assert validated["channel_settings"][1]["context"]["caption_cache_ttl_hours"] == 0
+    assert validated["channel_settings"][1]["awareness"]["inject_environment"] is False

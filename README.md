@@ -1,6 +1,15 @@
-# AstrBot 上下文管理
+# Context Enishi
 
-`astrbot_plugin_context_manager` 是按渠道管理 AstrBot 上下文的插件。当前从图片上下文管理与按需消息查询入手，减少图片在历史中的重复堆积，让模型通过来源 ID 按需读取；后续上下文管理功能会在同一插件中继续扩展。适用于 AstrBot 4.28.0 及以上版本（Python 3.12+），当前支持 QQ/NapCat 和 Telegram。
+Enishi 取日语「えにし／縁」的罗马音，意为缘或联系。`astrbot_plugin_context_enishi` 让 AstrBot 整理提供给模型的上下文，并按需认识聊天中的人和环境。适用于 AstrBot 4.28.0 及以上版本（Python 3.12+），当前支持 QQ/NapCat 和 Telegram。
+
+插件划分为两类独立功能：
+
+| 功能 | 职责 | 默认行为 |
+| --- | --- | --- |
+| 上下文整理 | 控制图片输入、原生 ID、转述文字缓存和临时文件生命周期 | 图片自动整理关闭，可按渠道开启 |
+| 聊天感知增强 | 查询人员、发言活动、聊天环境、消息和头像 | 提供查询工具，不自动向主模型附加环境摘要 |
+
+聊天感知不依赖图片处理模式。关闭自动图片整理仍可查询人员；关闭聊天感知也不影响图片整理。环境查询不会调用转述模型、下载图片或修改消息历史。
 
 现有功能包括：
 
@@ -8,10 +17,12 @@
 - 使用原生图片 ID 读取引用和历史中的图片，按需转述，提供模型回退和文字缓存。
 - 为其他工具提供临时图片文件，并管理普通与后台任务的文件生命周期。
 - 查询消息、历史发言、头像和群成员，按需补充模型上下文。
+- 群聊人员名单默认按最近发言排序，可改为指定时段内观察到的发言次数从多到少。
+- 按需获取群名、当前发言者、引用对象和少量活跃人员；可显式开启有长度预算的当轮摘要。
 
 ## 设置方式
 
-在插件设置中打开「渠道上下文设置」，添加或展开 **QQ（NapCat）**、**Telegram** 渠道条目，然后配置该渠道。当前渠道条目提供图片上下文相关设置。
+在插件设置中打开「渠道上下文设置」，添加或展开 **QQ（NapCat）**、**Telegram** 渠道条目，分别配置「上下文整理」和「聊天感知增强」。两类设置共用该条目的机器人／群／话题范围。
 
 **图片处理方式**有三个明确选项：
 
@@ -47,6 +58,8 @@
 | --- | --- |
 | `describe_channel_image(image_id, question)` | 从来源读取图片，由选定模型或备用模型转述，主模型只接收文字 |
 | `fetch_channel_image(image_id)` | 从来源获取本轮临时文件路径、尺寸、MIME 和字节数 |
+| `get_group_participants(order, limit, hours, start_time, end_time)` | 最近发言顺序或指定时段观察到的发言次数排行，带数据覆盖说明 |
+| `get_chat_environment(limit)` | 群名、当前发言者、引用对象和少量最近活跃人员 |
 | `get_channel_user_avatar(user_id)` | 取得头像原生图片 ID，随后可以转述或取文件 |
 | `get_channel_member_info(user_id)` | 查询当前群成员昵称、名片及角色 |
 | `get_channel_message(message_id)` | QQ 从 NapCat 查询；TG 读取当前载荷中的当前／引用消息 |
@@ -55,6 +68,18 @@
 例子：引用一张旧图后，模型调用 `describe_channel_image` 获取文字说明。用于生图时，先调用 `fetch_channel_image`，再把返回的本轮路径传给 `generate_image(reference_images=[path], use_context_images=false)`。
 
 开启图片管理时，通用生图工具的隐式上下文图片缓存入口会提示改用显式参考图，避免旧缓存覆盖新图。
+
+## 群聊人员与聊天环境
+
+`get_group_participants()` 默认 `order="recent"`，按最近发言由近到远返回最多 30 人。QQ 使用 NapCat 的原生成员快照与最后发言时间；没有可用时间的成员排在后面。TG 只能返回已有本地记录和当前消息中观察到的发言者，不会将其称为完整群名单。
+
+`get_group_participants(order="frequency", hours=24)` 按过去 24 小时中观察到的发言次数排序。可通过 `start_time`、`end_time` 指定 Unix 秒或包含时区的 ISO 8601 时段，例如 `2026-10-10T08:00:00+08:00`。有时段参数的 `recent` 排序也只看该时段里的发言。扫描预算按当前渠道配置，不会找到足够返回人数后提前停止统计。
+
+返回的 `observed_messages` 是扫描到的次数，不是全量发言次数。`membership_complete` 表示原生成员快照是否覆盖已知人员；`complete=false` 不承诺全量历史。结合 `activity.pages`、`stop_reason`、`time_basis`、`coverage` 和 `has_more` 理解结果。TG 使用框架真实的会话及话题键，只读本地历史；记录未开启、已清理或扫描预算不足时会明确返回有限覆盖。当前消息按可用原生／本地记录 ID 去重，无法确定是否已入库时不虚增次数。
+
+`get_chat_environment()` 用于需要了解聊天环境时主动查询。默认不会给每次主模型请求附加成员名单。显式打开「自动附加聊天环境摘要」后，仅附加有字符数和人数上限的当轮文本，不覆盖人格提示词，并利用框架临时内容标记避免保存到后续历史。后台或定时触发会注明是系统触发，不伪造一名群聊用户。
+
+模块边界与后续扩展约定见 [架构说明](docs/architecture.md)。
 
 ## 框架集成与历史范围
 
@@ -72,15 +97,17 @@ TG 相册合并前在现有图片组件上保留原生文件 ID；它不是接�
 
 ## 安装与验证
 
-GitHub 仓库地址：`https://github.com/WsureDev/astrbot_plugin_context_manager`。发布后可在 AstrBot 插件管理中使用仓库地址安装，或上传 `dist/astrbot_plugin_context_manager-v0.3.0.zip`。展开渠道条目配置即可。
+GitHub 仓库地址：`https://github.com/WsureDev/astrbot_plugin_context_enishi`。发布后可在 AstrBot 插件管理中使用仓库地址安装，或上传 `dist/astrbot_plugin_context_enishi-v0.4.0.zip`。展开渠道条目配置即可。
 
 ### 从旧名称迁移
 
-v0.3.0 将插件标识从 `astrbot_plugin_channel_media_tools` 改为 `astrbot_plugin_context_manager`，显示名改为「上下文管理」。已有工具名、命令和配置字段保持兼容。
+v0.4.0 的插件标识为 `astrbot_plugin_context_enishi`，显示名为「Context Enishi」。旧标识为 `astrbot_plugin_context_manager`（v0.3.0）或 `astrbot_plugin_channel_media_tools`（更早版本）。已有工具名和命令保持兼容。
 
-迁移前备份旧插件配置和文字缓存。独立安装新名称时，将 `data/config/astrbot_plugin_channel_media_tools_config.json` 的设置复制到 `data/config/astrbot_plugin_context_manager_config.json`；如使用配置方案的插件选择列表，也需选择新名称。停用旧插件后再启用新版，避免两份上下文策略同时运行。
+迁移前备份旧插件配置和文字缓存。独立安装新名称时，将 `data/config/<旧标识>_config.json` 的设置复制到 `data/config/astrbot_plugin_context_enishi_config.json`；如使用配置方案的插件选择列表，也需选择新名称。停用旧插件后再启用新版，避免两份上下文策略同时运行。
 
-首次使用新名称时，如果新数据目录尚无转述缓存，插件会直接复用旧目录 `data/plugin_data/astrbot_plugin_channel_media_tools/captions.sqlite3`，因此需保留旧缓存目录。已有新目录缓存时优先使用新缓存；不搬移、不覆盖旧文件。迁移过程中仍只保存转述文字，不缓存图片。开发过程没有自动安装或修改生产容器。
+旧渠道条目中的平铺图片设置会在启动时迁移到「上下文整理」，保留图片模式、模型、文字缓存和适用范围；「聊天感知增强」默认仅提供工具。迁移只修改本插件自己的配置，原有历史工具实现和根级扫描限额不变。
+
+首次使用新名称时，如果新数据目录尚无转述缓存，依次检查两个旧标识的数据目录并复用已有 `captions.sqlite3`，因此需保留旧缓存目录。已有新目录缓存时优先使用新缓存；不搬移、不覆盖旧文件。迁移过程中仍只保存转述文字，不缓存图片。开发过程没有自动安装或修改生产容器。
 
 安装开发依赖后运行：
 

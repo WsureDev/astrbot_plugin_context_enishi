@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot_plugin_context_manager.integration import RunnerIntegration
+from astrbot_plugin_context_enishi.context.runtime import RunnerIntegration
 
 from .conftest import request
 from .test_integration import owner

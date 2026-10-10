@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_context_manager.platforms import MAX_CAPTION_BYTES, ChannelError
-from astrbot_plugin_context_manager.settings import Settings
+from astrbot_plugin_context_enishi.channels.media import MAX_CAPTION_BYTES, ChannelError
+from astrbot_plugin_context_enishi.settings import Settings
 
 from .conftest import Event
 
@@ -27,7 +27,7 @@ def test_ui_is_channel_first_with_native_model_selectors():
         "cache_ttl_hours",
     }.intersection(schema)
     for template in schema["channel_settings"]["templates"].values():
-        items = template["items"]
+        items = template["items"]["context"]["items"]
         assert next(iter(items)) == "image_mode"
         assert items["image_mode"]["labels"] == [
             "关闭",
@@ -161,7 +161,7 @@ async def test_caption_cache_does_not_expire_by_default_and_saves_no_image_file(
 ):
     await service.policy.describe_image(service.event, "native_current", "内容")
     monkeypatch.setattr(
-        "astrbot_plugin_context_manager.storage.time.time", lambda: 9_999_999_999
+        "astrbot_plugin_context_enishi.context.storage.time.time", lambda: 9_999_999_999
     )
     result = await service.policy.describe_image(
         service.event, "native_current", "内容"
@@ -177,7 +177,7 @@ async def test_explicit_caption_expiration_works(service, monkeypatch):
     service.config["channel_settings"][0]["caption_cache_ttl_hours"] = 1
     await service.policy.describe_image(service.event, "native_current", "内容")
     monkeypatch.setattr(
-        "astrbot_plugin_context_manager.storage.time.time", lambda: 9_999_999_999
+        "astrbot_plugin_context_enishi.context.storage.time.time", lambda: 9_999_999_999
     )
     result = await service.policy.describe_image(
         service.event, "native_current", "内容"
@@ -241,7 +241,12 @@ def test_history_implementation_and_limits_are_unchanged():
         klass = next(
             n
             for n in ast.parse(code).body
-            if isinstance(n, ast.ClassDef) and n.name == "Channels"
+            if isinstance(n, ast.ClassDef)
+            and any(
+                isinstance(method, ast.AsyncFunctionDef)
+                and method.name == "user_history"
+                for method in n.body
+            )
         )
         return ast.dump(
             next(
@@ -252,7 +257,7 @@ def test_history_implementation_and_limits_are_unchanged():
             include_attributes=False,
         )
 
-    assert history(previous) == history((root / "platforms.py").read_text())
+    assert history(previous) == history((root / "awareness/sources.py").read_text())
     old_schema = json.loads(
         subprocess.run(
             ["git", "show", "ab68296:_conf_schema.json"],

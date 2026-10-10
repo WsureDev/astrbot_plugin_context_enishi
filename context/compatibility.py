@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 
-from .native import field
+from ..channels.native import field
 
 
 class BatchEvent:
@@ -62,12 +62,12 @@ class LegacyBatchDelivery:
                 from astrbot.api import logger
 
                 logger.exception(
-                    "[context_manager] ComfyUI batch delivery bridge failed"
+                    "[context_enishi] ComfyUI batch delivery bridge failed"
                 )
             finally:
                 self.pending.pop(id(state), None)
 
-        task = asyncio.create_task(deliver(), name="context-manager-comfy-batch")
+        task = asyncio.create_task(deliver(), name="context-enishi-comfy-batch")
         self.pending[id(state)] = task
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)

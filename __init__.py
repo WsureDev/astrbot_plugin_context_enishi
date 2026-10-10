@@ -1,1 +1,1 @@
-"""Channel-aware context management for AstrBot."""
+"""Context Enishi: context organization and channel-aware chat perception."""

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from astrbot_plugin_context_manager.identity import (
+from astrbot_plugin_context_enishi.context.storage import CaptionCache
+from astrbot_plugin_context_enishi.identity import (
     LEGACY_PLUGIN,
     PLUGIN,
     caption_data_directory,
 )
-from astrbot_plugin_context_manager.storage import CaptionCache
 
 
 def test_rename_reuses_legacy_caption_text_without_moving_files(tmp_path):

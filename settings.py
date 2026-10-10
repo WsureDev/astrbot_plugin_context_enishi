@@ -11,6 +11,33 @@ MODE_LABELS = {
     MODE_CURRENT_TURN: "仅本轮消息及引用允许图片内容",
     MODE_REFERENCE_ONLY: "始终使用图片 ID 引用图片",
 }
+CONTEXT_KEYS = (
+    "image_mode",
+    "caption_provider_id",
+    "caption_fallback_provider_ids",
+    "caption_cache_ttl_hours",
+    "max_caption_chars",
+)
+
+
+def migrate_channel_settings(config):
+    """Convert legacy flat image settings, retaining scope and independent awareness."""
+    changed = False
+    rules = config.get("channel_settings", [])
+    if not isinstance(rules, list):
+        return False
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        legacy = {key: rule[key] for key in CONTEXT_KEYS if key in rule}
+        if legacy:
+            context = dict(rule.get("context", {}) or {})
+            context.update(legacy)
+            rule["context"] = context
+            for key in legacy:
+                del rule[key]
+            changed = True
+    return changed
 
 
 def platform_name(event: Any) -> str:
@@ -37,11 +64,21 @@ class Policy:
     max_caption_chars: int = 4000
 
 
+@dataclass(frozen=True)
+class AwarenessPolicy:
+    enabled: bool = True
+    inject_environment: bool = False
+    summary_members: int = 8
+    summary_max_chars: int = 1600
+    max_participants: int = 100
+    scan_pages: int = 10
+
+
 class Settings:
     def __init__(self, config: Any):
         self.config = config
 
-    def for_event(self, event: Any) -> Policy:
+    def _rule(self, event: Any) -> dict:
         rules = self.config.get("channel_settings", [])
         if not isinstance(rules, list):
             raise ValueError("请在渠道上下文设置中添加 QQ 或 Telegram 渠道")
@@ -61,6 +98,13 @@ class Settings:
             score = int(bool(platform_id)) + int(bool(chat_id)) * 2
             if score >= specificity:
                 selected, specificity = rule, score
+        return selected
+
+    def for_event(self, event: Any) -> Policy:
+        rule = self._rule(event)
+        selected = rule.get("context", rule)
+        if not isinstance(selected, dict):
+            raise ValueError("上下文整理设置必须是一个配置对象")
         mode = str(selected.get("image_mode", MODE_DISABLED))
         if mode not in MODE_LABELS:
             raise ValueError("请从图片处理方式中选择有效选项")
@@ -81,6 +125,23 @@ class Settings:
             max_caption_chars=min(
                 max(int(selected.get("max_caption_chars", 4000)), 100), 16000
             ),
+        )
+
+    def awareness_for_event(self, event: Any) -> AwarenessPolicy:
+        selected = self._rule(event).get("awareness", {})
+        if not isinstance(selected, dict):
+            raise ValueError("聊天感知增强设置必须是一个配置对象")
+        return AwarenessPolicy(
+            enabled=bool(selected.get("enabled", True)),
+            inject_environment=bool(selected.get("inject_environment", False)),
+            summary_members=min(max(int(selected.get("summary_members", 8)), 1), 30),
+            summary_max_chars=min(
+                max(int(selected.get("summary_max_chars", 1600)), 256), 8192
+            ),
+            max_participants=min(
+                max(int(selected.get("max_participants", 100)), 1), 500
+            ),
+            scan_pages=min(max(int(selected.get("scan_pages", 10)), 1), 50),
         )
 
     def integer(self, key: str, default: int, minimum: int, maximum: int) -> int:

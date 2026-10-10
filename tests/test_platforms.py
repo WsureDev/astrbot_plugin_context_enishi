@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot_plugin_context_manager.native import ImageRef
-from astrbot_plugin_context_manager.platforms import ChannelError
+from astrbot_plugin_context_enishi.channels.media import ChannelError
+from astrbot_plugin_context_enishi.channels.native import ImageRef
 
 from .conftest import Event
 
@@ -96,7 +96,7 @@ async def test_qq_user_history_filter_and_cursor(service):
             for i in range(1, 8)
         ]
     }
-    result = await service.channels.user_history(event, "99", 2, 1)
+    result = await service.chat_sources.user_history(event, "99", 2, 1)
     assert len(result["messages"]) == 2 and result["next_cursor"] == "2"
     assert result["messages"][0]["image_ids"]
     assert not result["complete"]
@@ -122,7 +122,7 @@ async def test_tg_history_is_explicitly_partial_and_never_leaks_token_url(servic
     service.context.message_history_manager = SimpleNamespace(
         get=AsyncMock(return_value=[record])
     )
-    result = await service.channels.user_history(service.event, "99", 20, 1)
+    result = await service.chat_sources.user_history(service.event, "99", 20, 1)
     assert result["source"] == "astrbot_local" and not result["complete"]
     assert "SECRET" not in str(result)
     assert result["messages"][0]["local_record_id"] == "3"
@@ -154,7 +154,7 @@ async def test_tg_avatar_returns_downloadable_file_id(service):
     service.event.client.get_user_profile_photos.return_value = SimpleNamespace(
         photos=[[SimpleNamespace(file_id="avatar")]]
     )
-    ref = await service.channels.user_avatar(service.event, "99")
+    ref = await service.chat_sources.user_avatar(service.event, "99")
     assert ref.native_id == "avatar"
 
 
@@ -163,18 +163,18 @@ async def test_tg_hidden_avatar_is_a_capability_error(service):
         photos=[]
     )
     with pytest.raises(ChannelError, match="no accessible"):
-        await service.channels.user_avatar(service.event, "99")
+        await service.chat_sources.user_avatar(service.event, "99")
 
 
 async def test_tg_native_message_reads_unseen_reply_payload(service):
-    result = await service.channels.message(service.event, "1")
+    result = await service.chat_sources.message(service.event, "1")
     assert result["source"] == "telegram_payload"
     assert "native_unseen_reply" in result["image_ids"][0]
 
 
 async def test_tg_arbitrary_message_does_not_claim_bot_api_history(service):
     with pytest.raises(ChannelError, match="cannot fetch arbitrary"):
-        await service.channels.message(service.event, "not-in-payload")
+        await service.chat_sources.message(service.event, "not-in-payload")
 
 
 async def test_cross_chat_message_does_not_fall_back_to_file_fetch(service):

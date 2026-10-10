@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
-from .native import ImageRef, field, qq_images, telegram_images
-from .settings import MODE_DISABLED, platform_name, scope
+from ..channels.native import ImageRef, field, qq_images, telegram_images
+from ..settings import MODE_DISABLED, platform_name, scope
 
 PLACEHOLDER = re.compile(r"\[(?:图片|Image)\]")
 

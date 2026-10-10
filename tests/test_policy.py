@@ -5,8 +5,8 @@ import base64
 
 import pytest
 
-from astrbot_plugin_context_manager.native import ImageRef
-from astrbot_plugin_context_manager.platforms import ChannelError
+from astrbot_plugin_context_enishi.channels.media import ChannelError
+from astrbot_plugin_context_enishi.channels.native import ImageRef
 
 from .conftest import image_count, picture, request, runner
 

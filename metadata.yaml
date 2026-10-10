@@ -1,9 +1,9 @@
-name: astrbot_plugin_context_manager
-display_name: 上下文管理
-desc: 按渠道管理 AstrBot 上下文，支持图片 ID 引用、本轮图片输入、图片转述及聊天消息查询。
-version: v0.3.0
+name: astrbot_plugin_context_enishi
+display_name: Context Enishi
+desc: 将上下文整理与聊天感知分开配置，支持图片管理、群聊人员活跃排序及按需环境查询。
+version: v0.4.0
 author: WsureDev
-repo: https://github.com/WsureDev/astrbot_plugin_context_manager
+repo: https://github.com/WsureDev/astrbot_plugin_context_enishi
 astrbot_version: ">=4.28.0"
 support_platforms:
   - aiocqhttp

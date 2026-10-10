@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_context_manager.integration import (
+from astrbot_plugin_context_enishi.channels.media import TRANSFER_CONTEXT
+from astrbot_plugin_context_enishi.context.runtime import (
     BACKGROUND_IMAGES,
     RunnerIntegration,
 )
-from astrbot_plugin_context_manager.platforms import TRANSFER_CONTEXT
 
 from .test_integration import RunnerBoundary, owner
 

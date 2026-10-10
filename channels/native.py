@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
-from .settings import platform_name, scope
+from ..settings import platform_name, scope
 
 
 def field(value: Any, name: str, default: Any = None) -> Any:

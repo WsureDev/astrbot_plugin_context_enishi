@@ -6,10 +6,10 @@ from contextvars import ContextVar
 from dataclasses import replace
 from weakref import WeakKeyDictionary, ref
 
+from ..channels.media import TRANSFER_CONSUMER, TRANSFER_CONTEXT
+from ..channels.native import field
+from ..settings import MODE_REFERENCE_ONLY
 from .compatibility import LegacyBatchDelivery
-from .native import field
-from .platforms import TRANSFER_CONSUMER, TRANSFER_CONTEXT
-from .settings import MODE_REFERENCE_ONLY
 
 BACKGROUND_IMAGES = ContextVar("channel_media_background_images", default=None)
 BACKGROUND_RUN = ContextVar("channel_media_background_run", default=False)

@@ -11,10 +11,11 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from astrbot_plugin_context_manager.platforms import Channels
-from astrbot_plugin_context_manager.policy import MediaPolicy
-from astrbot_plugin_context_manager.settings import Settings
-from astrbot_plugin_context_manager.storage import CaptionCache
+from astrbot_plugin_context_enishi.awareness.sources import ChatSources
+from astrbot_plugin_context_enishi.channels.media import MediaSources
+from astrbot_plugin_context_enishi.context.media import MediaPolicy
+from astrbot_plugin_context_enishi.context.storage import CaptionCache
+from astrbot_plugin_context_enishi.settings import Settings
 
 
 class Event:
@@ -101,7 +102,7 @@ def service(tmp_path, image_bytes):
             return_value=SimpleNamespace(completion_text="蓝色背景，文字为示例")
         ),
     )
-    channels = Channels(context, settings, [tmp_path / "temp"])
+    channels = MediaSources(context, settings, [tmp_path / "temp"])
     policy = MediaPolicy(context, settings, channels, text_factory, cache)
     event = Event(
         raw={
@@ -126,6 +127,7 @@ def service(tmp_path, image_bytes):
         cache=cache,
         context=context,
         channels=channels,
+        chat_sources=ChatSources(context, settings),
         policy=policy,
         event=event,
         media=media,
