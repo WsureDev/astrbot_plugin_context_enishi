@@ -60,7 +60,7 @@ class RunnerIntegration:
         previous = getattr(reset, "_channel_media_owner", None)
         if previous is not None and previous.active:
             raise RuntimeError(
-                "another active channel media plugin instance owns the runner"
+                "another active context manager plugin instance owns the runner"
             )
         self.active = True
         self.delivery.active = True

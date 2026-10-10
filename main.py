@@ -12,6 +12,7 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 from .flow import FlowIntegration
+from .identity import PLUGIN, caption_data_directory
 from .integration import RunnerIntegration
 from .native import field
 from .platforms import ChannelError, Channels
@@ -19,10 +20,8 @@ from .policy import MediaPolicy
 from .settings import MODE_DISABLED, MODE_LABELS, Settings, platform_name
 from .storage import CaptionCache
 
-PLUGIN = "astrbot_plugin_channel_media_tools"
 
-
-class ChannelMediaTools(Star):
+class ContextManagerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.context = context
@@ -36,7 +35,7 @@ class ChannelMediaTools(Star):
     async def initialize(self):
         data = Path(StarTools.get_data_dir(PLUGIN))
         temporary = Path(get_astrbot_temp_path())
-        self.cache = CaptionCache(data)
+        self.cache = CaptionCache(caption_data_directory(data))
         self.channels = Channels(self.context, self.settings, [temporary])
         self.policy = MediaPolicy(
             self.context, self.settings, self.channels, TextPart, self.cache

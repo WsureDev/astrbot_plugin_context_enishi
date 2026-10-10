@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from mcp.types import CallToolResult, TextContent
 
-from astrbot_plugin_channel_media_tools.compatibility import LegacyBatchDelivery
+from astrbot_plugin_context_manager.compatibility import LegacyBatchDelivery
 
 
 async def test_bridge_delivers_overlapping_batches_without_clearing_new_state(service):

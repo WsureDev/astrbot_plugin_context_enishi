@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_channel_media_tools.platforms import MAX_CAPTION_BYTES, ChannelError
-from astrbot_plugin_channel_media_tools.settings import Settings
+from astrbot_plugin_context_manager.platforms import MAX_CAPTION_BYTES, ChannelError
+from astrbot_plugin_context_manager.settings import Settings
 
 from .conftest import Event
 
@@ -161,7 +161,7 @@ async def test_caption_cache_does_not_expire_by_default_and_saves_no_image_file(
 ):
     await service.policy.describe_image(service.event, "native_current", "内容")
     monkeypatch.setattr(
-        "astrbot_plugin_channel_media_tools.storage.time.time", lambda: 9_999_999_999
+        "astrbot_plugin_context_manager.storage.time.time", lambda: 9_999_999_999
     )
     result = await service.policy.describe_image(
         service.event, "native_current", "内容"
@@ -177,7 +177,7 @@ async def test_explicit_caption_expiration_works(service, monkeypatch):
     service.config["channel_settings"][0]["caption_cache_ttl_hours"] = 1
     await service.policy.describe_image(service.event, "native_current", "内容")
     monkeypatch.setattr(
-        "astrbot_plugin_channel_media_tools.storage.time.time", lambda: 9_999_999_999
+        "astrbot_plugin_context_manager.storage.time.time", lambda: 9_999_999_999
     )
     result = await service.policy.describe_image(
         service.event, "native_current", "内容"

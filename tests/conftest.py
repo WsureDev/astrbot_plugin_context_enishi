@@ -11,10 +11,10 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from astrbot_plugin_channel_media_tools.platforms import Channels
-from astrbot_plugin_channel_media_tools.policy import MediaPolicy
-from astrbot_plugin_channel_media_tools.settings import Settings
-from astrbot_plugin_channel_media_tools.storage import CaptionCache
+from astrbot_plugin_context_manager.platforms import Channels
+from astrbot_plugin_context_manager.policy import MediaPolicy
+from astrbot_plugin_context_manager.settings import Settings
+from astrbot_plugin_context_manager.storage import CaptionCache
 
 
 class Event:

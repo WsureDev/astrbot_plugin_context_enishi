@@ -44,7 +44,7 @@ class Settings:
     def for_event(self, event: Any) -> Policy:
         rules = self.config.get("channel_settings", [])
         if not isinstance(rules, list):
-            raise ValueError("请在渠道图片设置中添加 QQ 或 Telegram 渠道")
+            raise ValueError("请在渠道上下文设置中添加 QQ 或 Telegram 渠道")
         selected, specificity = {}, -1
         for rule in rules:
             if not isinstance(rule, dict) or rule.get(

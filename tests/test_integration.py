@@ -6,7 +6,7 @@ import weakref
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from astrbot_plugin_channel_media_tools.integration import RunnerIntegration
+from astrbot_plugin_context_manager.integration import RunnerIntegration
 
 from .conftest import image_count, picture, request
 

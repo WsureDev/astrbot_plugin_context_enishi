@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from astrbot_plugin_channel_media_tools.integration import (
+from astrbot_plugin_context_manager.integration import (
     BACKGROUND_IMAGES,
     RunnerIntegration,
 )
-from astrbot_plugin_channel_media_tools.platforms import TRANSFER_CONTEXT
+from astrbot_plugin_context_manager.platforms import TRANSFER_CONTEXT
 
 from .test_integration import RunnerBoundary, owner
 

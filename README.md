@@ -1,10 +1,17 @@
-# 渠道图片压缩与查询工具
+# AstrBot 上下文管理
 
-使用 QQ/NapCat 和 Telegram 原生图片标识管理图片上下文，提供图片转述、取文件、历史发言、头像、成员和单条消息查询工具。适用于 AstrBot 4.28.0 及以上版本。
+`astrbot_plugin_context_manager` 是按渠道管理 AstrBot 上下文的插件。当前从图片上下文管理与按需消息查询入手，减少图片在历史中的重复堆积，让模型通过来源 ID 按需读取；后续上下文管理功能会在同一插件中继续扩展。适用于 AstrBot 4.28.0 及以上版本（Python 3.12+），当前支持 QQ/NapCat 和 Telegram。
+
+现有功能包括：
+
+- 按渠道选择关闭图片管理、仅本轮允许图片，或始终使用图片 ID。
+- 使用原生图片 ID 读取引用和历史中的图片，按需转述，提供模型回退和文字缓存。
+- 为其他工具提供临时图片文件，并管理普通与后台任务的文件生命周期。
+- 查询消息、历史发言、头像和群成员，按需补充模型上下文。
 
 ## 设置方式
 
-在插件设置中打开「渠道图片设置」，添加或展开 **QQ（NapCat）**、**Telegram** 渠道条目，然后配置该渠道。
+在插件设置中打开「渠道上下文设置」，添加或展开 **QQ（NapCat）**、**Telegram** 渠道条目，然后配置该渠道。当前渠道条目提供图片上下文相关设置。
 
 **图片处理方式**有三个明确选项：
 
@@ -65,7 +72,15 @@ TG 相册合并前在现有图片组件上保留原生文件 ID；它不是接�
 
 ## 安装与验证
 
-安装包为 `dist/astrbot_plugin_channel_media_tools-v0.2.2.zip`。展开渠道条目配置即可，配置格式保持兼容。开发过程没有自动安装或修改生产容器。
+GitHub 仓库地址：`https://github.com/WsureDev/astrbot_plugin_context_manager`。发布后可在 AstrBot 插件管理中使用仓库地址安装，或上传 `dist/astrbot_plugin_context_manager-v0.3.0.zip`。展开渠道条目配置即可。
+
+### 从旧名称迁移
+
+v0.3.0 将插件标识从 `astrbot_plugin_channel_media_tools` 改为 `astrbot_plugin_context_manager`，显示名改为「上下文管理」。已有工具名、命令和配置字段保持兼容。
+
+迁移前备份旧插件配置和文字缓存。独立安装新名称时，将 `data/config/astrbot_plugin_channel_media_tools_config.json` 的设置复制到 `data/config/astrbot_plugin_context_manager_config.json`；如使用配置方案的插件选择列表，也需选择新名称。停用旧插件后再启用新版，避免两份上下文策略同时运行。
+
+首次使用新名称时，如果新数据目录尚无转述缓存，插件会直接复用旧目录 `data/plugin_data/astrbot_plugin_channel_media_tools/captions.sqlite3`，因此需保留旧缓存目录。已有新目录缓存时优先使用新缓存；不搬移、不覆盖旧文件。迁移过程中仍只保存转述文字，不缓存图片。开发过程没有自动安装或修改生产容器。
 
 安装开发依赖后运行：
 

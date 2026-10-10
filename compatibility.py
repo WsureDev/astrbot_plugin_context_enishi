@@ -62,12 +62,12 @@ class LegacyBatchDelivery:
                 from astrbot.api import logger
 
                 logger.exception(
-                    "[channel_media_tools] ComfyUI batch delivery bridge failed"
+                    "[context_manager] ComfyUI batch delivery bridge failed"
                 )
             finally:
                 self.pending.pop(id(state), None)
 
-        task = asyncio.create_task(deliver(), name="channel-media-comfy-batch")
+        task = asyncio.create_task(deliver(), name="context-manager-comfy-batch")
         self.pending[id(state)] = task
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)

@@ -1,8 +1,8 @@
 {
   "channel_settings": {
     "type": "template_list",
-    "description": "渠道图片设置",
-    "hint": "先添加 QQ 或 Telegram 渠道，再配置该渠道的图片处理方式和转述模型。",
+    "description": "渠道上下文设置",
+    "hint": "先添加 QQ 或 Telegram 渠道，再配置该渠道的上下文策略；当前支持图片处理方式和转述模型。",
     "default": [
       {
         "__template_key": "qq",

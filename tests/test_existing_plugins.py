@@ -20,7 +20,7 @@ from unittest.mock import Mock
 import mcp.types
 import pytest
 
-from astrbot_plugin_channel_media_tools.integration import RunnerIntegration
+from astrbot_plugin_context_manager.integration import RunnerIntegration
 
 from .conftest import request
 from .test_integration import RunnerBoundary, owner

@@ -1,1 +1,1 @@
-"""Native channel media references and context policies for AstrBot."""
+"""Channel-aware context management for AstrBot."""
