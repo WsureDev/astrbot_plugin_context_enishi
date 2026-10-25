@@ -71,17 +71,20 @@ async def test_reference_only_removes_existing_and_tool_pixels_before_model(
         request(),
         [
             {"role": "user", "content": [picture(url)]},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "[Image from tool 'read_file', path='test.png']",
-                    },
-                    picture(url),
-                ],
-            },
         ],
+    )
+    await service.policy.before_step(run)
+    run.run_context.messages.append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "[Image from tool 'read_file', path='test.png']",
+                },
+                picture(url),
+            ],
+        }
     )
     await service.policy.before_step(run)
     assert image_count(run.run_context.messages) == 0

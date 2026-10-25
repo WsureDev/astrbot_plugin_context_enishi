@@ -72,7 +72,7 @@ class EnishiPlugin(Star):
     async def remove_persistent_pixels(
         self, event: AstrMessageEvent, run_context, response
     ):
-        if self.organizer.enabled_event(event):
+        if self.participates(event):
             # The state-transition guard covers error and aborted completion.
             await self.organizer.policy.finish_context(event, run_context)
 
@@ -89,6 +89,8 @@ class EnishiPlugin(Star):
         question: str = "描述图片内容，包括可见文字和重要细节。",
     ) -> str:
         """通过独立转述模型读取渠道原生图片 ID，主模型只接收文字，结果带缓存。
+
+        完整转述仅用于本轮任务，后续历史保留图片 ID 与短占位；再次需要时按 ID 查询。
 
         Args:
             image_id(string): 图片标记里的完整 ID，或当前渠道的原生文件 ID。

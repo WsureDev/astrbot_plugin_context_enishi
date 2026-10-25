@@ -28,6 +28,8 @@ flowchart TB
 
 `channels/message_schema.py` 与 `channels/relations.py` 提供两个功能域共享的消息投影。显式开启当前消息 metadata 时，`ContextOrganizer` 通过 `additions.py` 写入持久身份块；这一步独立于图片策略，且不进行成员或历史查询。环境摘要继续作为临时内容。字段映射见 [消息字段对齐](message-alignment.md)。
 
+`context/captions.py` 管理本插件图片转述的历史投影。每个 runner 首次处理请求时清理可识别旧转述，后续步骤保留本轮完整描述，完成或错误结束时再改为短占位。自动工具图片转述使用临时内容标记；`describe_channel_image` 通过工具调用 ID 关联结果，只替换 description，保留调用配对与图片 URI。此文字生命周期在图片模式关闭时仍生效，像素处理继续遵循图片开关。转述缓存与历史投影相互独立。
+
 ## 聊天感知增强
 
 `ChatAwareness` 提供查询与环境视图。`ChatSources` 保留原有历史发言、消息、头像和成员查询实现。`ParticipantDirectory` 负责人员合并、原生名单、只读扫描、去重、时段选择和排序。

@@ -29,7 +29,7 @@ class ContextOrganizer:
 
     def enabled_for_runner(self, runner):
         event = field(field(runner.run_context, "context"), "event")
-        return event is not None and self.enabled_event(event)
+        return event is not None and self.participates(event)
 
     async def initialize(
         self, data, temporary, text_factory, runner_class, executor_class

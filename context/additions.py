@@ -36,6 +36,15 @@ def append_message_metadata(request, metadata, text_factory):
         request.system_prompt = system + "\n" + METADATA_RULES
 
 
+def temporary_text(text, text_factory):
+    addition = text_factory(text=text)
+    if hasattr(addition, "mark_as_temp"):
+        addition.mark_as_temp()
+    elif isinstance(addition, dict):
+        addition["_no_save"] = True
+    return addition
+
+
 def append_temporary_text(request, text, prefix, text_factory):
     """Compose a request-local text addition without modifying saved history."""
     parts = list(field(request, "extra_user_content_parts", []) or [])
@@ -47,10 +56,5 @@ def append_temporary_text(request, text, prefix, text_factory):
             and str(field(part, "text", "")).startswith(prefix)
         )
     ]
-    addition = text_factory(text=text)
-    if hasattr(addition, "mark_as_temp"):
-        addition.mark_as_temp()
-    elif isinstance(addition, dict):
-        addition["_no_save"] = True
-    parts.append(addition)
+    parts.append(temporary_text(text, text_factory))
     request.extra_user_content_parts = parts

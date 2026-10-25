@@ -16,6 +16,13 @@ from ..settings import (
     Settings,
     scope,
 )
+from .additions import temporary_text
+from .captions import (
+    CAPTION_OMITTED,
+    CAPTION_PREFIX,
+    CaptionHistory,
+    is_tool_image_message,
+)
 from .storage import CaptionCache
 
 CAPTION_SYSTEM = (
@@ -33,6 +40,7 @@ class RunState:
     allowed_urls: set[str] = dataclass_field(default_factory=set)
     current_parts: set[int] = dataclass_field(default_factory=set)
     scrubbed: bool = False
+    captions: CaptionHistory = dataclass_field(default_factory=CaptionHistory)
 
 
 class MediaPolicy:
@@ -164,6 +172,8 @@ class MediaPolicy:
             "Use fetch_channel_image to obtain a local file for a downstream tool; pass its path explicitly. "
             "File retrieval does not place pixels in your context. "
             "File paths are temporary for this turn; fetch again by native image ID in later turns. "
+            "Full image descriptions are available only in the current task; "
+            "use describe_channel_image again by native image ID when needed in a later turn. "
             + (
                 "Your context must contain no image pixels. "
                 if state.mode == MODE_REFERENCE_ONLY
@@ -193,9 +203,14 @@ class MediaPolicy:
         if event is None:
             return
         state = self.state(event, runner.req)
-        if state.mode == MODE_DISABLED:
-            return
         object.__setattr__(runner.run_context, "_channel_media_state", state)
+        first_step = not state.initialized
+        state.captions.process(
+            runner.run_context.messages, self.text_factory, expire=first_step
+        )
+        if state.mode == MODE_DISABLED:
+            state.initialized = True
+            return
         if not state.initialized:
             if not state.sources:
                 state.sources = await self.channels.current_images(event)
@@ -229,7 +244,12 @@ class MediaPolicy:
                     if missing:
                         parts.append(self.text_factory(text="\n".join(missing)))
             state.initialized = True
-        await self.rewrite_messages(event, runner.run_context.messages, state)
+        await self.rewrite_messages(
+            event,
+            runner.run_context.messages,
+            state,
+            allow_tool_captions=not first_step,
+        )
         state.scrubbed = True
         # Clear a second provider-facing attachment path as well as messages.
         if state.mode == MODE_REFERENCE_ONLY:
@@ -241,17 +261,19 @@ class MediaPolicy:
         ]
 
     async def rewrite_messages(
-        self, event: Any, messages: list[Any], state: RunState, persist: bool = False
+        self,
+        event: Any,
+        messages: list[Any],
+        state: RunState,
+        *,
+        allow_tool_captions: bool = False,
     ):
-        if persist:
-            self.remove_history_pixels(messages)
-            return
         for message in messages:
             parts = field(message, "content", None)
             if not isinstance(parts, list):
                 continue
             output = []
-            tool_message = any("[Image from tool '" in self._text(p) for p in parts)
+            tool_message = is_tool_image_message(message)
             for part in parts:
                 if field(part, "type") != "image_url":
                     output.append(part)
@@ -264,14 +286,18 @@ class MediaPolicy:
                     if not state.scrubbed
                     else url in state.allowed_urls
                 )
-                if state.mode == MODE_CURRENT_TURN and not persist and current_part:
+                if state.mode == MODE_CURRENT_TURN and current_part:
                     if hasattr(part, "mark_as_temp"):
                         part.mark_as_temp()
                     output.append(part)
                     if not any(marker == self._text(p) for p in parts):
                         output.append(self.text_factory(text=marker))
                     continue
-                if state.mode == MODE_REFERENCE_ONLY and tool_message and not persist:
+                if (
+                    state.mode == MODE_REFERENCE_ONLY
+                    and tool_message
+                    and allow_tool_captions
+                ):
                     try:
                         data = await self.channels.bytes_from_source(
                             url, max_bytes=MAX_CAPTION_BYTES - 1
@@ -281,7 +307,18 @@ class MediaPolicy:
                             data,
                             "描述这张工具返回的图片，保留与当前任务相关的细节和可见文字。",
                         )
-                        marker = "[工具图片转述] " + description["description"]
+                        output.append(
+                            temporary_text(
+                                CAPTION_PREFIX + description["description"],
+                                self.text_factory,
+                            )
+                        )
+                        marker = CAPTION_OMITTED
+                        native = field(image, "id", "")
+                        if isinstance(native, str) and native.startswith(
+                            ("qq://", "telegram://")
+                        ):
+                            marker = self._native_marker(part)
                     except ChannelError as exc:
                         marker = "[工具图片已移出主模型上下文] " + str(exc)
                     except Exception as exc:
@@ -316,6 +353,9 @@ class MediaPolicy:
         if event is None:
             return
         state = self.state(event, runner.req)
+        state.captions.process(
+            runner.run_context.messages, self.text_factory, expire=True
+        )
         if state.mode != MODE_DISABLED:
             self.remove_history_pixels(runner.run_context.messages)
         self.channels.release_transfers(event, run_context=runner.run_context)
@@ -327,10 +367,9 @@ class MediaPolicy:
         state = getattr(run_context, "_channel_media_state", None)
         if state is None:
             state = RunState(self.settings.for_event(event).mode)
+        state.captions.process(run_context.messages, self.text_factory, expire=True)
         if state.mode != MODE_DISABLED:
-            await self.rewrite_messages(
-                event, run_context.messages, state, persist=True
-            )
+            self.remove_history_pixels(run_context.messages)
 
     def sanitize_payload(self, runner: Any, payload: list[dict]) -> list[dict]:
         """Final synchronous guard, including direct follow-up provider calls."""
