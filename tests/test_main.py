@@ -134,3 +134,31 @@ async def test_entrypoint_default_request_has_no_automatic_environment_data(
     assert req.image_urls == ["existing-image"]
     assert req.system_prompt == "persona" and not req.extra_user_content_parts
     service.event.client.get_file.assert_not_called()
+
+
+async def test_entrypoint_metadata_works_with_disabled_images_and_awareness(
+    service, plugin_class
+):
+    config = Config(
+        dict(
+            channel_settings=[
+                dict(
+                    __template_key="telegram",
+                    context=dict(image_mode="disabled", message_metadata_enabled=True),
+                    awareness=dict(enabled=False),
+                )
+            ]
+        )
+    )
+    plugin = plugin_class(service.context, config)
+    req = request(["original-image"])
+    await plugin.prepare_media(service.event, req)
+    assert len(req.extra_user_content_parts) == 1
+    assert "channel_message_meta" in req.extra_user_content_parts[0]["text"]
+    assert req.image_urls == ["original-image"]
+    service.event.client.get_file.assert_not_called()
+    service.event.bot.call_action.assert_not_called()
+    service.event.plugins_name = []
+    excluded = request()
+    await plugin.prepare_media(service.event, excluded)
+    assert excluded.extra_user_content_parts == []

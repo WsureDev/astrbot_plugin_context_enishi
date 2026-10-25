@@ -26,6 +26,8 @@ flowchart TB
 
 `ContextOrganizer` 管理 `MediaPolicy`、runner 集成、Flow 图片标记兼容和文字缓存。`additions.py` 统一把显式启用的环境提示组合成临时文本内容。已有监控占用的 `step`、`_iter_llm_responses` 和 `execute` 保持函数身份不变。
 
+`channels/message_schema.py` 与 `channels/relations.py` 提供两个功能域共享的消息投影。显式开启当前消息 metadata 时，`ContextOrganizer` 通过 `additions.py` 写入持久身份块；这一步独立于图片策略，且不进行成员或历史查询。环境摘要继续作为临时内容。字段映射见 [消息字段对齐](message-alignment.md)。
+
 ## 聊天感知增强
 
 `ChatAwareness` 提供查询与环境视图。`ChatSources` 保留原有历史发言、消息、头像和成员查询实现。`ParticipantDirectory` 负责人员合并、原生名单、只读扫描、去重、时段选择和排序。

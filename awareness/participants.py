@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from dataclasses import field as data_field
 from datetime import UTC, datetime
 
+from ..channels.message_schema import current_message_metadata, message_scope
 from ..channels.native import field
 from ..channels.transport import ChannelError
 from ..settings import platform_name, scope
@@ -49,6 +50,20 @@ def parse_time(value, default):
 
 
 def current_speaker(event, now):
+    speaker = _current_speaker(event, now)
+    metadata = current_message_metadata(event)
+    speaker.update(
+        sender_id=metadata["sender_id"],
+        sender_name=metadata["sender_name"],
+        time_basis=metadata["time_basis"],
+        last_spoke_at_basis=metadata["time_basis"],
+    )
+    if speaker["last_spoke_at"] is not None and metadata["timestamp"] is None:
+        speaker["last_spoke_at_basis"] = "framework_received"
+    return speaker
+
+
+def _current_speaker(event, now):
     if str(event.get_platform_name()).lower() == "cron":
         return dict(
             user_id=None,
@@ -112,6 +127,7 @@ class ParticipantDirectory:
         message = field(raw, "message") or field(raw, "effective_message") or {}
         chat = field(message, "chat", {}) if platform == "telegram" else {}
         info = dict(
+            **message_scope(event),
             platform=platform,
             chat_id=scope(event),
             type="group" if event.get_group_id() else "private",
@@ -153,6 +169,7 @@ class ParticipantDirectory:
                     )
         except (ChannelError, ValueError, TypeError):
             info["info_available"] = False
+        info["group_name"] = info["name"] or info["group_name"]
         return info
 
     @staticmethod
@@ -162,6 +179,7 @@ class ParticipantDirectory:
             display_name=label(name) or label(uid, 64),
             role=label(role, 32) or None,
             last_spoke_at=epoch(last) or None,
+            last_spoke_at_basis="platform_message" if epoch(last) else "unknown",
             observed_messages=None,
             origin=origin,
         )
@@ -270,7 +288,13 @@ class ParticipantDirectory:
                     if uid and uid != "bot" and stamp and start <= stamp <= end:
                         scan.observations.append(
                             dict(
-                                user_id=uid, name=label(name), timestamp=stamp, key=key
+                                user_id=uid,
+                                name=label(name),
+                                timestamp=stamp,
+                                key=key,
+                                time_basis="platform_message"
+                                if platform == "qq"
+                                else "local_record_created",
                             )
                         )
                 if not new_records:
@@ -344,6 +368,7 @@ class ParticipantDirectory:
             for person in people.values():
                 person["native_last_spoke_at"] = person["last_spoke_at"]
                 person["last_spoke_at"] = None
+                person["last_spoke_at_basis"] = "unknown"
         scan = ActivityScan(stop_reason="native_recency")
         if period or platform == "telegram" or not membership_complete:
             scan = await self._scan(event, start, end, selected.scan_pages)
@@ -353,6 +378,8 @@ class ParticipantDirectory:
                 person["last_spoke_at"] = max(
                     person["last_spoke_at"] or 0, observation["timestamp"]
                 )
+                if person["last_spoke_at"] == observation["timestamp"]:
+                    person["last_spoke_at_basis"] = observation["time_basis"]
                 person["observed_messages"] = (person["observed_messages"] or 0) + 1
         current = current_speaker(event, now)
         uid = current.get("user_id")
@@ -366,6 +393,8 @@ class ParticipantDirectory:
             person["last_spoke_at"] = max(
                 person["last_spoke_at"] or 0, current["last_spoke_at"]
             )
+            if person["last_spoke_at"] == current["last_spoke_at"]:
+                person["last_spoke_at_basis"] = current["last_spoke_at_basis"]
             key = current.get("message_key")
             if period and key and key not in scan.seen:
                 person["observed_messages"] = (person["observed_messages"] or 0) + 1

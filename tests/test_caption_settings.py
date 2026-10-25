@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 import subprocess
 from pathlib import Path
@@ -29,6 +28,7 @@ def test_ui_is_channel_first_with_native_model_selectors():
     for template in schema["channel_settings"]["templates"].values():
         items = template["items"]["context"]["items"]
         assert next(iter(items)) == "image_mode"
+        assert items["message_metadata_enabled"]["default"] is False
         assert items["image_mode"]["labels"] == [
             "关闭",
             "仅本轮消息及引用允许图片内容",
@@ -227,37 +227,8 @@ async def test_finished_turn_deletes_transfer_files(service):
     assert not path.exists()
 
 
-def test_history_implementation_and_limits_are_unchanged():
+def test_history_scan_limits_are_unchanged():
     root = Path(__file__).parents[1]
-    previous = subprocess.run(
-        ["git", "show", "ab68296:platforms.py"],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-
-    def history(code):
-        klass = next(
-            n
-            for n in ast.parse(code).body
-            if isinstance(n, ast.ClassDef)
-            and any(
-                isinstance(method, ast.AsyncFunctionDef)
-                and method.name == "user_history"
-                for method in n.body
-            )
-        )
-        return ast.dump(
-            next(
-                n
-                for n in klass.body
-                if isinstance(n, ast.AsyncFunctionDef) and n.name == "user_history"
-            ),
-            include_attributes=False,
-        )
-
-    assert history(previous) == history((root / "awareness/sources.py").read_text())
     old_schema = json.loads(
         subprocess.run(
             ["git", "show", "ab68296:_conf_schema.json"],

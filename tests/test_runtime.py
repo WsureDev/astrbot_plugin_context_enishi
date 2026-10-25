@@ -184,6 +184,7 @@ async def test_actual_astrbot_step_provider_payload_and_history(
                 ],
             )
             self._state = runtime.State.IDLE
+            self._step_budget_max = None
             self._abort_signal = None
             self.request_max_retries = 1
             self.streaming = False

@@ -7,6 +7,7 @@
       {
         "__template_key": "qq",
         "context": {
+          "message_metadata_enabled": false,
           "image_mode": "disabled",
           "caption_provider_id": "",
           "caption_fallback_provider_ids": [],
@@ -29,6 +30,7 @@
       {
         "__template_key": "telegram",
         "context": {
+          "message_metadata_enabled": false,
           "image_mode": "disabled",
           "caption_provider_id": "",
           "caption_fallback_provider_ids": [],
@@ -74,6 +76,12 @@
                 ],
                 "default": "disabled",
                 "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+              },
+              "message_metadata_enabled": {
+                "type": "bool",
+                "description": "附加当前消息身份与关系",
+                "default": false,
+                "hint": "保存当前消息 ID、作者、引用和提及关系；不依赖图片模式，不接管群聊历史，也不自动查询成员或历史。"
               },
               "caption_provider_id": {
                 "type": "string",
@@ -192,6 +200,12 @@
                 ],
                 "default": "disabled",
                 "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+              },
+              "message_metadata_enabled": {
+                "type": "bool",
+                "description": "附加当前消息身份与关系",
+                "default": false,
+                "hint": "保存当前消息 ID、作者、引用和提及关系；不依赖图片模式，不接管群聊历史，也不自动查询成员或历史。"
               },
               "caption_provider_id": {
                 "type": "string",

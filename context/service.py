@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from ..channels.media import MediaSources
+from ..channels.message_schema import current_message_metadata
 from ..channels.native import field
 from ..identity import caption_data_directory
 from ..settings import MODE_DISABLED
+from .additions import append_message_metadata
 from .flow import FlowIntegration
 from .media import MediaPolicy
 from .runtime import RunnerIntegration
@@ -58,6 +60,15 @@ class ContextOrganizer:
     async def prepare_request(self, event, request):
         if self.enabled_event(event):
             await self.policy.prepare_request(event, request)
+
+    def prepare_metadata(self, event, request, text_factory):
+        if (
+            self.participates(event)
+            and self.settings.for_event(event).message_metadata_enabled
+        ):
+            append_message_metadata(
+                request, current_message_metadata(event), text_factory
+            )
 
     def close(self):
         self.flow.terminate()

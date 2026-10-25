@@ -58,6 +58,7 @@ def scope(event: Any) -> str:
 @dataclass(frozen=True)
 class Policy:
     mode: str = MODE_DISABLED
+    message_metadata_enabled: bool = False
     caption_provider_id: str = ""
     caption_fallback_provider_ids: tuple[str, ...] = ()
     caption_cache_ttl_hours: int = 0
@@ -113,6 +114,9 @@ class Settings:
             raise ValueError("请通过备用图片转述模型选择器选择模型")
         return Policy(
             mode=mode,
+            message_metadata_enabled=bool(
+                selected.get("message_metadata_enabled", False)
+            ),
             caption_provider_id=str(
                 selected.get("caption_provider_id", "") or ""
             ).strip(),

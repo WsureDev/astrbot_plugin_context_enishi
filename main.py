@@ -63,6 +63,7 @@ class EnishiPlugin(Star):
     @filter.on_llm_request(priority=-2_147_483_647)
     async def prepare_media(self, event: AstrMessageEvent, request):
         await self.organizer.prepare_request(event, request)
+        self.organizer.prepare_metadata(event, request, TextPart)
         hint = await self.awareness.request_hint(event)
         if hint is not None:
             append_temporary_text(request, hint, self.awareness.HINT_PREFIX, TextPart)

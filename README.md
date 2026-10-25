@@ -24,6 +24,10 @@ Enishi 取日语「えにし／縁」的罗马音，意为缘或联系。`astrbo
 
 在插件设置中打开「渠道上下文设置」，添加或展开 **QQ（NapCat）**、**Telegram** 渠道条目，分别配置「上下文整理」和「聊天感知增强」。两类设置共用该条目的机器人／群／话题范围。
 
+「上下文整理 → 附加当前消息身份与关系」（`context.message_metadata_enabled`）默认关闭。开启后，为当前 user 消息追加一个 `<channel_message_meta>` JSON 块，包含消息与作者 ID、实例与会话范围、引用作者、提及对象、时间来源及原生图片 URI；该块随 user 历史保存，不重复正文。图片模式关闭、聊天感知工具关闭时也可独立使用；自动环境摘要仍只在当轮有效。构建当前 metadata 不查询成员名单或群历史，重复处理同一请求时替换已有块。
+
+消息与历史查询保留旧返回键，新增相同的标准字段。所有身份 ID 使用字符串；缺失 ID 与时间使用 `null`，未恢复的关系标记 `relations_complete=false`。QQ 单条查询最多补查一次引用作者，失败时保留引用 ID 和未知作者；批量历史不逐条补查。Telegram 仍仅支持当前或引用载荷及已有本地历史，本地 `local_record_id` 不作为原生 `message_id`。本轮元数据对齐不改变 Flow 的记录、游标或历史注入方式。完整映射和回滚说明见 [消息字段对齐](docs/message-alignment.md)。
+
 **图片处理方式**有三个明确选项：
 
 | 选项 | 本轮主模型上下文 | 后续历史 |
@@ -93,11 +97,11 @@ v0.2.2 保留已有监控包装的 `step`、`_iter_llm_responses` 和 `execute` 
 
 TG 相册合并前在现有图片组件上保留原生文件 ID；它不是接收索引，也不要求先见过被引用消息。安装群聊上下文 Flow 时，将来源 ID 保留到它原有的文本记录中。
 
-已有历史如果只剩图片占位符、过期下载链接或没有来源 ID 的 Base64，无法凭空还原原生标识。TG Bot API 没有任意群历史查询接口；历史工具继续只读 AstrBot 的已有本地记录，返回 `source=astrbot_local`、`complete=false`。历史发言逻辑及两项扫描限额保持原样。
+已有历史如果只剩图片占位符、过期下载链接或没有来源 ID 的 Base64，无法凭空还原原生标识。TG Bot API 没有任意群历史查询接口；历史工具继续只读 AstrBot 的已有本地记录，返回 `source=astrbot_local`、`complete=false`。历史查询补充标准字段，TG 本地查询使用完整会话范围；两项扫描限额保持原样。
 
 ## 安装与验证
 
-GitHub 仓库地址：`https://github.com/WsureDev/astrbot_plugin_context_enishi`。发布后可在 AstrBot 插件管理中使用仓库地址安装，或上传 `dist/astrbot_plugin_context_enishi-v0.4.0.zip`。展开渠道条目配置即可。
+GitHub 仓库地址：`https://github.com/WsureDev/astrbot_plugin_context_enishi`。发布后可在 AstrBot 插件管理中使用仓库地址安装，或上传 `dist/astrbot_plugin_context_enishi-v0.4.1.zip`。展开渠道条目配置即可。
 
 ### 从旧名称迁移
 
