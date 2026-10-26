@@ -25,7 +25,6 @@ from ...channels.native import field
 from ...channels.transport import ChannelError
 from .files import run_io
 from .history import HistorySaveHook, contains_proof
-from .migration import export_flow, import_flow
 from .replies import SelfReplies
 from .store import FlowStore
 
@@ -61,7 +60,6 @@ class GroupFlow:
         self.replies = SelfReplies()
         self.active = False
         self.blocked = {}
-        self.receiving = {}
         self.locks = weakref.WeakValueDictionary()
         self.work = set()
         self.closed = False
@@ -167,21 +165,17 @@ class GroupFlow:
         if lock is None:
             lock = asyncio.Lock()
             self.locks[scope] = lock
-        self.receiving[scope] = self.receiving.get(scope, 0) + 1
-        try:
-            async with lock:
-                if self.closed:
-                    return None
-                return await self._io(
-                    self.store.append,
-                    scope,
-                    record,
-                    key,
-                    event_meta(event),
-                    config["max_log_records"],
-                )
-        finally:
-            self.receiving[scope] -= 1
+        async with lock:
+            if self.closed:
+                return None
+            return await self._io(
+                self.store.append,
+                scope,
+                record,
+                key,
+                event_meta(event),
+                config["max_log_records"],
+            )
 
     async def prepare(self, event, request, text_factory):
         if not self.enabled(event) or not field(field(request, "conversation"), "cid"):
@@ -232,10 +226,6 @@ class GroupFlow:
             entries = entries[-options["max_delta_messages"] :]
         records = [entry["record"] for entry in entries]
         delta_meta = dict(metadata)
-        if any(entry.get("legacy") for entry in entries):
-            delta_meta["coverage"] = (
-                "imported summaries may lack native message IDs and relationships"
-            )
         budget = options["max_delta_chars"]
         while records:
             if skipped:
@@ -270,7 +260,13 @@ class GroupFlow:
         else:
             request._enishi_flow_delta = None
         request.contexts = contexts
-        proof = current_table(current, metadata)
+        current_meta = dict(metadata, source="enishi_live", injected_count=len(records))
+        if not records and not skipped:
+            current_meta["coverage"] = (
+                "No additional group messages to inject from Enishi's own live log; "
+                "only messages received while enabled are available."
+            )
+        proof = current_table(current, current_meta)
         parts = [
             part
             for part in field(request, "extra_user_content_parts", []) or []
@@ -445,33 +441,6 @@ class GroupFlow:
         for run_id, pending in list(self.pending.items()):
             if pending.scope == event.unified_msg_origin:
                 self._drop(run_id)
-
-    def _migration_ready(self, event):
-        if not event.get_group_id() or self.store is None:
-            raise ChannelError("群聊流水迁移只支持群聊")
-        if self.settings.flow_enabled(event):
-            raise ChannelError(
-                "迁移前请先关闭当前渠道的 Enishi 群聊流水，并等待现有任务结束"
-            )
-        if any(p.scope == event.unified_msg_origin for p in self.pending.values()):
-            raise ChannelError("当前群仍有未完成的流水任务")
-        if self.receiving.get(event.unified_msg_origin, 0):
-            raise ChannelError("当前群仍有正在落盘的流水消息，请稍后重试")
-        reason = self.conflict(event)
-        if reason:
-            raise ChannelError(reason)
-
-    async def import_flow(self, event):
-        self._migration_ready(event)
-        source = self.store.directory.parent.parent / EXTERNAL_FLOW
-        return await self._io(import_flow, self.store, source, event)
-
-    async def export_flow(self, event):
-        self._migration_ready(event)
-        cid = await self.context.conversation_manager.get_curr_conversation_id(
-            event.unified_msg_origin
-        )
-        return await self._io(export_flow, self.store, event, cid)
 
     def terminate(self):
         self.closed = True

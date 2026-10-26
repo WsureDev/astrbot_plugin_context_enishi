@@ -31,7 +31,7 @@ flowchart TB
 
 `channels/messages.py` 从原生事件与 QQ/TG 载荷读取官方消息字段，`message_components.py` 提取显式引用和提及，`meta.py` 渲染并转义 META 表格。`awareness/render.py` 将查询的公共范围、覆盖和统计信息放到一个头部，避免逐条复制。
 
-`context/group_flow/store.py` 是单进程文件流水，所有日志及共享游标状态操作由同一个锁保护。`service.py` 选取 `cursor < seq < trigger_seq` 的记录，按原生消息 ID 而不是正文去重。`history.py` 在框架会话保存成功后检查当前消息与后续 assistant 记录，再提交游标；仅收到 LLM 响应不提交。边界代次、单调水位和任务归属防止旧任务覆盖 reset/new。`migration.py` 只复制导入和生成导出副本，不改外部插件目录。详见 [流水接管](group-flow.md)。
+`context/group_flow/store.py` 是 Enishi 自己的单进程文件流水，所有日志及共享游标状态操作由同一个锁保护。`service.py` 选取 `cursor < seq < trigger_seq` 的记录，按原生消息 ID 而不是正文去重。`history.py` 在框架会话保存成功后检查当前消息与后续 assistant 记录，再提交游标；仅收到 LLM 响应不提交。边界代次、单调水位和任务归属防止旧任务覆盖 reset/new。不读写旧 Flow 的数据，也不提供导入导出桥接。详见 [原生群聊流水](group-flow.md)。
 
 `context/captions.py` 管理本插件图片转述的历史投影。每个 runner 首次处理请求时清理可识别旧转述，后续步骤保留本轮完整描述，完成或错误结束时移除完整描述，不写入已转述占位。自动工具图片转述使用临时内容标记；`describe_channel_image` 通过工具调用 ID 关联结果，只移除历史 description，保留调用配对与原始图片 URI。此文字生命周期在图片模式关闭时仍生效，像素处理继续遵循图片开关。转述缓存与历史投影相互独立。
 

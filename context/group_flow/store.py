@@ -43,10 +43,6 @@ class FlowStore:
             for key in ("last_seq", "generation", "floor")
         ):
             raise ValueError("flow watermarks are invalid")
-        if flow.get("importing"):
-            raise ValueError(
-                "flow import is incomplete; repeat the import before enabling reception"
-            )
         return flow
 
     def _path(self, scope):
@@ -163,9 +159,6 @@ class FlowStore:
     def clear(self, scope):
         with self.lock:
             state = self._state()
-            flow = state["flows"].get(scope)
-            if isinstance(flow, dict):
-                flow.pop("importing", None)
             flow = self._flow(state, scope)
             records = self._records(scope)
             if records:
@@ -187,35 +180,3 @@ class FlowStore:
                 if meta.get("scope") == scope
             }
             return dict(flow=flow, cursors=cursors, records=records)
-
-    def import_records(self, scope, records, cursors, metadata, fingerprint):
-        with self.lock:
-            state = self._state()
-            flow = state["flows"].get(scope, {})
-            importing = flow.get("importing")
-            if importing:
-                if importing != fingerprint:
-                    raise ValueError("source changed during interrupted import")
-            elif flow.get("last_seq", 0) or self._records(scope):
-                raise ValueError("destination flow is not empty")
-            latest = max((entry["seq"] for entry in records), default=0)
-            if any(
-                not isinstance(value, int) or value < 0 or value > latest
-                for value in cursors.values()
-            ):
-                raise ValueError("imported cursor is outside the log watermark")
-            flow = dict(
-                last_seq=latest,
-                floor=0,
-                generation=int(flow.get("generation", 0)) + 1,
-                meta=metadata,
-                importing=fingerprint,
-            )
-            state["flows"][scope] = flow
-            write_json(self.state_path, state)
-            self._write_records(scope, records)
-            for conversation, cursor in cursors.items():
-                self._set_cursor(state, scope, conversation, cursor)
-            del flow["importing"]
-            write_json(self.state_path, state)
-            return dict(records=len(records), cursors=len(cursors), latest_seq=latest)

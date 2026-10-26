@@ -303,29 +303,5 @@ class EnishiPlugin(Star):
         except (ChannelError, ValueError, OSError) as exc:
             yield event.plain_result(str(exc))
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("enishi_flow_import")
-    async def import_group_flow(self, event: AstrMessageEvent):
-        try:
-            result = await self.organizer.flow.import_flow(event)
-            yield event.plain_result(
-                "已复制导入当前群的 Flow 数据：\n"
-                + "\n".join(f"{key}: {value}" for key, value in result.items())
-            )
-        except (ChannelError, ValueError, OSError) as exc:
-            yield event.plain_result(str(exc))
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("enishi_flow_export")
-    async def export_group_flow(self, event: AstrMessageEvent):
-        try:
-            result = await self.organizer.flow.export_flow(event)
-            yield event.plain_result(
-                "已生成当前群的外部 Flow 回滚副本：\n"
-                + "\n".join(f"{key}: {value}" for key, value in result.items())
-            )
-        except (ChannelError, ValueError, OSError) as exc:
-            yield event.plain_result(str(exc))
-
     async def terminate(self):
         await self.organizer.aclose()

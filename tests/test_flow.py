@@ -52,6 +52,16 @@ async def test_native_delta_keeps_same_text_authors_and_excludes_trigger(service
     assert run.finished
 
 
+async def test_first_trigger_reports_empty_live_log_without_old_flow_data(service):
+    event, req = group_event("1", "现在呢"), flow_request()
+    await service.flow.prepare(event, req, text_factory)
+    assert not req.contexts
+    identity = req.extra_user_content_parts[-1]["text"]
+    assert 'source="enishi_live"' in identity and "injected_count=0" in identity
+    assert "only messages received while enabled are available" in identity
+    assert service.flow.store.dump(event.unified_msg_origin)["records"][0]["seq"] == 1
+
+
 async def test_response_wrong_save_failure_and_retry_do_not_advance_early(service):
     event, req = group_event("1"), flow_request()
     await service.flow.prepare(event, req, text_factory)
@@ -337,7 +347,7 @@ async def test_unload_reload_restores_one_save_wrapper(service, tmp_path):
     assert run.finished
 
 
-async def test_cancellation_drains_record_write_before_migration_can_start(
+async def test_cancellation_drains_record_write_before_releasing_scope_lock(
     service, monkeypatch
 ):
     entered = asyncio.Event()
@@ -356,14 +366,15 @@ async def test_cancellation_drains_record_write_before_migration_can_start(
     await entered.wait()
     task.cancel()
     await asyncio.sleep(0)
-    assert service.flow.receiving[event.unified_msg_origin] == 1
+    assert service.flow.locks[event.unified_msg_origin].locked()
     task.cancel()
     await asyncio.sleep(0)
-    assert service.flow.receiving[event.unified_msg_origin] == 1
+    assert service.flow.locks[event.unified_msg_origin].locked()
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert service.flow.receiving[event.unified_msg_origin] == 0
+    lock = service.flow.locks.get(event.unified_msg_origin)
+    assert lock is None or not lock.locked()
     assert service.flow.store.dump(event.unified_msg_origin)["flow"]["last_seq"] == 1
 
 
