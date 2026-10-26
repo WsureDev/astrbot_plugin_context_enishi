@@ -28,7 +28,6 @@ def test_ui_is_channel_first_with_native_model_selectors():
     for template in schema["channel_settings"]["templates"].values():
         items = template["items"]["context"]["items"]
         assert next(iter(items)) == "image_mode"
-        assert items["message_metadata_enabled"]["default"] is False
         assert items["image_mode"]["labels"] == [
             "关闭",
             "仅本轮消息及引用允许图片内容",

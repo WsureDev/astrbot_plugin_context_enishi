@@ -12,7 +12,6 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 from .awareness.service import ChatAwareness
-from .channels.native import field
 from .channels.transport import ChannelError
 from .context.additions import append_temporary_text
 from .context.service import ContextOrganizer
@@ -41,18 +40,24 @@ class EnishiPlugin(Star):
         logger.info("[%s] context organization and chat awareness initialized", PLUGIN)
 
     @filter.on_astrbot_loaded()
-    async def attach_flow(self):
-        self.organizer.flow.reconcile()
+    async def attach_group_history_save(self):
+        self.organizer.flow.attach_save_hook()
 
-    @filter.on_plugin_loaded()
-    async def attach_loaded_flow(self, metadata):
-        if field(metadata, "name", metadata) == "astrbot_plugin_group_context_flow":
-            self.organizer.flow.reconcile()
+    @filter.event_message_type(
+        filter.EventMessageType.GROUP_MESSAGE, priority=2_147_483_627
+    )
+    async def record_group_message(self, event: AstrMessageEvent):
+        try:
+            await self.organizer.flow.record(event)
+        except (ChannelError, OSError, ValueError):
+            logger.exception("[%s] could not record group flow", PLUGIN)
 
-    @filter.on_plugin_unloaded()
-    async def detach_unloaded_flow(self, metadata):
-        if field(metadata, "name", metadata) == "astrbot_plugin_group_context_flow":
-            self.organizer.flow.terminate()
+    @filter.on_decorating_result(priority=-2_147_483_627)
+    async def mark_group_boundary(self, event: AstrMessageEvent):
+        try:
+            await self.organizer.flow.boundary(event)
+        except (ChannelError, OSError, ValueError):
+            logger.exception("[%s] could not mark group flow boundary", PLUGIN)
 
     def participates(self, event):
         plugins = getattr(event, "plugins_name", None)
@@ -62,8 +67,11 @@ class EnishiPlugin(Star):
 
     @filter.on_llm_request(priority=-2_147_483_647)
     async def prepare_media(self, event: AstrMessageEvent, request):
+        try:
+            await self.organizer.flow.prepare(event, request, TextPart)
+        except (ChannelError, OSError, ValueError):
+            logger.exception("[%s] group flow injection stopped", PLUGIN)
         await self.organizer.prepare_request(event, request)
-        self.organizer.prepare_metadata(event, request, TextPart)
         hint = await self.awareness.request_hint(event)
         if hint is not None:
             append_temporary_text(request, hint, self.awareness.HINT_PREFIX, TextPart)
@@ -75,6 +83,7 @@ class EnishiPlugin(Star):
         if self.participates(event):
             # The state-transition guard covers error and aborted completion.
             await self.organizer.policy.finish_context(event, run_context)
+            self.organizer.flow.finish(event, run_context, response)
 
     @filter.on_using_llm_tool(priority=-2_147_483_647)
     async def reserve_background_images(self, event: AstrMessageEvent, tool, tool_args):
@@ -90,7 +99,7 @@ class EnishiPlugin(Star):
     ) -> str:
         """通过独立转述模型读取渠道原生图片 ID，主模型只接收文字，结果带缓存。
 
-        完整转述仅用于本轮任务，后续历史保留图片 ID 与短占位；再次需要时按 ID 查询。
+        完整转述仅用于本轮任务，后续历史保留原图片 ID，不写已转述占位；再次需要时按 ID 查询。
 
         Args:
             image_id(string): 图片标记里的完整 ID，或当前渠道的原生文件 ID。
@@ -146,11 +155,11 @@ class EnishiPlugin(Star):
         """
         try:
             self.awareness.require_enabled(event)
-            return json.dumps(
+            return self.awareness.message_text(
+                event,
                 await self.awareness.sources.user_history(
                     event, user_id, limit, days, before_id
                 ),
-                ensure_ascii=False,
             )
         except (ChannelError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -182,9 +191,9 @@ class EnishiPlugin(Star):
         """
         try:
             self.awareness.require_enabled(event)
-            return json.dumps(
+            return self.awareness.message_text(
+                event,
                 await self.awareness.sources.message(event, message_id),
-                ensure_ascii=False,
             )
         except (ChannelError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -200,9 +209,9 @@ class EnishiPlugin(Star):
         """
         try:
             self.awareness.require_enabled(event)
-            return json.dumps(
+            return self.awareness.member_text(
+                event,
                 await self.awareness.sources.member_info(event, user_id),
-                ensure_ascii=False,
             )
         except (ChannelError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -240,7 +249,8 @@ class EnishiPlugin(Star):
             end_time(string): 可选结束时间，格式同上；默认当前时间，不可使用未来时间。
         """
         try:
-            return json.dumps(
+            return self.awareness.participants_text(
+                event,
                 await self.awareness.participants(
                     event,
                     order=order,
@@ -249,7 +259,6 @@ class EnishiPlugin(Star):
                     start_time=start_time,
                     end_time=end_time,
                 ),
-                ensure_ascii=False,
             )
         except (ChannelError, ValueError, TypeError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -266,11 +275,57 @@ class EnishiPlugin(Star):
             limit(number): 最多列出多少位最近活跃人员，默认 8。
         """
         try:
-            return json.dumps(
-                await self.awareness.environment(event, limit), ensure_ascii=False
+            return self.awareness.environment_text(
+                event, await self.awareness.environment(event, limit)
             )
         except (ChannelError, ValueError, TypeError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
 
+    @filter.command("enishi_flow_status")
+    async def group_flow_status(self, event: AstrMessageEvent):
+        try:
+            result = await self.organizer.flow.status(event)
+            yield event.plain_result(
+                "Enishi 群聊流水：\n"
+                + "\n".join(f"{key}: {value}" for key, value in result.items())
+            )
+        except (ChannelError, ValueError, OSError) as exc:
+            yield event.plain_result(str(exc))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("enishi_flow_clear")
+    async def clear_group_flow(self, event: AstrMessageEvent):
+        try:
+            await self.organizer.flow.clear(event)
+            yield event.plain_result(
+                "已清空当前群的 Enishi 原始流水；AstrBot 会话历史保留。"
+            )
+        except (ChannelError, ValueError, OSError) as exc:
+            yield event.plain_result(str(exc))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("enishi_flow_import")
+    async def import_group_flow(self, event: AstrMessageEvent):
+        try:
+            result = await self.organizer.flow.import_flow(event)
+            yield event.plain_result(
+                "已复制导入当前群的 Flow 数据：\n"
+                + "\n".join(f"{key}: {value}" for key, value in result.items())
+            )
+        except (ChannelError, ValueError, OSError) as exc:
+            yield event.plain_result(str(exc))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("enishi_flow_export")
+    async def export_group_flow(self, event: AstrMessageEvent):
+        try:
+            result = await self.organizer.flow.export_flow(event)
+            yield event.plain_result(
+                "已生成当前群的外部 Flow 回滚副本：\n"
+                + "\n".join(f"{key}: {value}" for key, value in result.items())
+            )
+        except (ChannelError, ValueError, OSError) as exc:
+            yield event.plain_result(str(exc))
+
     async def terminate(self):
-        self.organizer.close()
+        await self.organizer.aclose()

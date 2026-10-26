@@ -58,7 +58,6 @@ def scope(event: Any) -> str:
 @dataclass(frozen=True)
 class Policy:
     mode: str = MODE_DISABLED
-    message_metadata_enabled: bool = False
     caption_provider_id: str = ""
     caption_fallback_provider_ids: tuple[str, ...] = ()
     caption_cache_ttl_hours: int = 0
@@ -114,9 +113,6 @@ class Settings:
             raise ValueError("请通过备用图片转述模型选择器选择模型")
         return Policy(
             mode=mode,
-            message_metadata_enabled=bool(
-                selected.get("message_metadata_enabled", False)
-            ),
             caption_provider_id=str(
                 selected.get("caption_provider_id", "") or ""
             ).strip(),
@@ -146,6 +142,30 @@ class Settings:
                 max(int(selected.get("max_participants", 100)), 1), 500
             ),
             scan_pages=min(max(int(selected.get("scan_pages", 10)), 1), 50),
+        )
+
+    def flow_enabled(self, event):
+        return bool(
+            self._rule(event).get("context", {}).get("group_flow_enabled", False)
+        )
+
+    def flow_options(self):
+        selected = self.config.get("group_flow", {}) or {}
+        if not isinstance(selected, dict):
+            raise ValueError("群聊流水设置必须是一个配置对象")
+        max_chars = min(max(int(selected.get("max_delta_chars", 16000)), 0), 1000000)
+        if max_chars:
+            max_chars = max(max_chars, 512)
+        return dict(
+            max_log_records=min(
+                max(int(selected.get("max_log_records", 5000)), 0), 100000
+            ),
+            max_delta_messages=min(
+                max(int(selected.get("max_delta_messages", 0)), 0), 10000
+            ),
+            max_delta_chars=max_chars,
+            record_self_messages=bool(selected.get("record_self_messages", False)),
+            record_empty_messages=bool(selected.get("record_empty_messages", True)),
         )
 
     def integer(self, key: str, default: int, minimum: int, maximum: int) -> int:

@@ -18,7 +18,6 @@ from ..settings import (
 )
 from .additions import temporary_text
 from .captions import (
-    CAPTION_OMITTED,
     CAPTION_PREFIX,
     CaptionHistory,
     is_tool_image_message,
@@ -313,12 +312,6 @@ class MediaPolicy:
                                 self.text_factory,
                             )
                         )
-                        marker = CAPTION_OMITTED
-                        native = field(image, "id", "")
-                        if isinstance(native, str) and native.startswith(
-                            ("qq://", "telegram://")
-                        ):
-                            marker = self._native_marker(part)
                     except ChannelError as exc:
                         marker = "[工具图片已移出主模型上下文] " + str(exc)
                     except Exception as exc:

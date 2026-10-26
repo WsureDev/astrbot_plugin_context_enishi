@@ -1,7 +1,7 @@
 name: astrbot_plugin_context_enishi
 display_name: Context Enishi
-desc: 将上下文整理与聊天感知分开配置，支持图片管理、群聊人员活跃排序及按需环境查询。
-version: v0.4.2
+desc: 使用紧凑 META 整理聊天上下文，内置群聊增量流水，支持图片按需转述及人员与历史查询。
+version: v0.4.3
 author: WsureDev
 repo: https://github.com/WsureDev/astrbot_plugin_context_enishi
 astrbot_version: ">=4.28.0"

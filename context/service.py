@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from ..channels.media import MediaSources
-from ..channels.message_schema import current_message_metadata
 from ..channels.native import field
 from ..identity import caption_data_directory
 from ..settings import MODE_DISABLED
-from .additions import append_message_metadata
-from .flow import FlowIntegration
+from .group_flow.service import GroupFlow
 from .media import MediaPolicy
 from .runtime import RunnerIntegration
 from .storage import CaptionCache
@@ -19,7 +17,7 @@ class ContextOrganizer:
         self.context, self.settings, self.participates = context, settings, participates
         self.cache = self.channels = self.policy = None
         self.integration = RunnerIntegration(self)
-        self.flow = FlowIntegration(self)
+        self.flow = GroupFlow(self)
 
     def enabled_event(self, event):
         return (
@@ -40,6 +38,7 @@ class ContextOrganizer:
             self.context, self.settings, self.channels, text_factory, self.cache
         )
         try:
+            self.flow.initialize(data / "flow")
             self.integration.install(runner_class, executor_class)
             from astrbot.core import astr_main_agent
 
@@ -52,7 +51,6 @@ class ContextOrganizer:
                 self.integration.preserve_telegram_ids(TelegramPlatformAdapter)
             except ImportError:
                 pass
-            self.flow.reconcile()
         except BaseException:
             self.close()
             raise
@@ -61,14 +59,9 @@ class ContextOrganizer:
         if self.enabled_event(event):
             await self.policy.prepare_request(event, request)
 
-    def prepare_metadata(self, event, request, text_factory):
-        if (
-            self.participates(event)
-            and self.settings.for_event(event).message_metadata_enabled
-        ):
-            append_message_metadata(
-                request, current_message_metadata(event), text_factory
-            )
+    async def aclose(self):
+        await self.flow.aclose()
+        self.close()
 
     def close(self):
         self.flow.terminate()

@@ -7,12 +7,12 @@
       {
         "__template_key": "qq",
         "context": {
-          "message_metadata_enabled": false,
           "image_mode": "disabled",
           "caption_provider_id": "",
           "caption_fallback_provider_ids": [],
           "caption_cache_ttl_hours": 0,
-          "max_caption_chars": 4000
+          "max_caption_chars": 4000,
+          "group_flow_enabled": false
         },
         "awareness": {
           "enabled": true,
@@ -30,12 +30,12 @@
       {
         "__template_key": "telegram",
         "context": {
-          "message_metadata_enabled": false,
           "image_mode": "disabled",
           "caption_provider_id": "",
           "caption_fallback_provider_ids": [],
           "caption_cache_ttl_hours": 0,
-          "max_caption_chars": 4000
+          "max_caption_chars": 4000,
+          "group_flow_enabled": false
         },
         "awareness": {
           "enabled": true,
@@ -77,12 +77,6 @@
                 "default": "disabled",
                 "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
               },
-              "message_metadata_enabled": {
-                "type": "bool",
-                "description": "附加当前消息身份与关系",
-                "default": false,
-                "hint": "保存当前消息 ID、作者、引用和提及关系；不依赖图片模式，不接管群聊历史，也不自动查询成员或历史。"
-              },
               "caption_provider_id": {
                 "type": "string",
                 "description": "图片转述模型",
@@ -110,6 +104,12 @@
                 "type": "int",
                 "description": "转述最大字符数",
                 "default": 4000
+              },
+              "group_flow_enabled": {
+                "type": "bool",
+                "description": "接管群聊流水",
+                "default": false,
+                "hint": "启用后由 Enishi 记录并注入 META 增量消息；先停用外部 Flow 和 AstrBot 内置群聊消息注入，避免冲突。与图片模式独立。"
               }
             }
           },
@@ -201,12 +201,6 @@
                 "default": "disabled",
                 "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
               },
-              "message_metadata_enabled": {
-                "type": "bool",
-                "description": "附加当前消息身份与关系",
-                "default": false,
-                "hint": "保存当前消息 ID、作者、引用和提及关系；不依赖图片模式，不接管群聊历史，也不自动查询成员或历史。"
-              },
               "caption_provider_id": {
                 "type": "string",
                 "description": "图片转述模型",
@@ -234,6 +228,12 @@
                 "type": "int",
                 "description": "转述最大字符数",
                 "default": 4000
+              },
+              "group_flow_enabled": {
+                "type": "bool",
+                "description": "接管群聊流水",
+                "default": false,
+                "hint": "启用后由 Enishi 记录并注入 META 增量消息；先停用外部 Flow 和 AstrBot 内置群聊消息注入，避免冲突。与图片模式独立。"
               }
             }
           },
@@ -317,5 +317,42 @@
     "type": "int",
     "description": "历史发言工具每次最多扫描页数，每页 100 条",
     "default": 10
+  },
+  "group_flow": {
+    "type": "object",
+    "description": "群聊流水",
+    "hint": "在渠道条目的上下文整理中启用。日志与转述缓存分开；最终会话仍由 AstrBot 保存。",
+    "items": {
+      "max_log_records": {
+        "type": "int",
+        "description": "每个会话保留的最大原始消息数",
+        "default": 5000,
+        "hint": "0 表示不限制。裁剪不重置消息顺序号。"
+      },
+      "max_delta_messages": {
+        "type": "int",
+        "description": "每轮最多注入的增量消息数",
+        "default": 0,
+        "hint": "0 表示不限制。超过预算时跳过较早消息，并在 META 报告数量。"
+      },
+      "max_delta_chars": {
+        "type": "int",
+        "description": "每轮增量最多字符数",
+        "default": 16000,
+        "hint": "0 表示不限制；非零最少 512。跳过的消息在本轮保存后不会自动补发。"
+      },
+      "record_self_messages": {
+        "type": "bool",
+        "description": "记录机器人非 LLM 平台消息",
+        "default": false,
+        "hint": "LLM 回复的近期平台回流单独过滤，避免和 assistant 历史重复。"
+      },
+      "record_empty_messages": {
+        "type": "bool",
+        "description": "记录无正文消息",
+        "default": true,
+        "hint": "图片等非文本消息保留原生定位或组件标记。"
+      }
+    }
   }
 }

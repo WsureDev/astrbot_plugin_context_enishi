@@ -80,6 +80,9 @@ class RunnerIntegration:
         def wrapped_transition(runner, *args, **kwargs):
             result = transition(runner, *args, **kwargs)
             if integration.current(generation) and runner.done():
+                flow = getattr(integration.owner, "flow", None)
+                if flow is not None:
+                    flow.runner_finished(runner)
                 if integration.owner.enabled_for_runner(runner):
                     integration.owner.policy.finish_sync(runner)
                 else:
@@ -143,6 +146,9 @@ class RunnerIntegration:
         event = field(field(runner.run_context, "context"), "event")
         if event is not None:
             self.owner.channels.register_runner(event, runner.run_context)
+        flow = getattr(self.owner, "flow", None)
+        if flow is not None:
+            flow.bind_runner(runner)
 
         @functools.wraps(process)
         async def wrapped_process(*args, **kwargs):

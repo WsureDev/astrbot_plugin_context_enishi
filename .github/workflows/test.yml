@@ -11,6 +11,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12", "3.13"]
+        astrbot-version: ["v4.28.0", "v4.29.3"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -18,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: AstrBotDevs/AstrBot
-          ref: v4.28.0
+          ref: ${{ matrix.astrbot-version }}
           path: .test-astrbot
       - uses: actions/setup-python@v5
         with:

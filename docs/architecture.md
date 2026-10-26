@@ -11,12 +11,15 @@ flowchart TB
     Media --> Transport
     Organizer --> Native[channels/native：原生标识]
     Awareness --> Native
+    Organizer --> Flow[context/group_flow：记录、边界与保存确认]
+    Flow --> Meta[channels/messages 与 meta：官方字段及 META 渲染]
+    Awareness --> Meta
     Entry --> Settings[settings：渠道、功能域与适用范围]
 ```
 
 | 层 | 可以做什么 | 边界 |
 | --- | --- | --- |
-| `context/` | 请求内容整理、历史像素移除、文字转述缓存、临时图片生命周期、兼容已有 runner 与工具 | 不承担成员统计或群聊事实查询 |
+| `context/` | 请求内容整理、增量流水、保存确认、图片隔离、转述缓存与临时图片生命周期 | 不承担成员统计或群聊事实查询 |
 | `awareness/` | 获取人员、环境、消息、头像、角色和已观察到的发言活动；生成可选摘要文本 | 不改模型消息历史、不调用 LLM、不下载或保存图片 |
 | `channels/` | 读取来源渠道、解析原生标识；图片层为明确消费者提供临时文件 | 不决定模型上下文策略或人员排序 |
 | `settings.py` | 按渠道及机器人／群／话题选择两个独立功能域的配置 | 图片模式不控制聊天感知开关 |
@@ -24,11 +27,13 @@ flowchart TB
 
 ## 上下文整理
 
-`ContextOrganizer` 管理 `MediaPolicy`、runner 集成、Flow 图片标记兼容和文字缓存。`additions.py` 统一把显式启用的环境提示组合成临时文本内容。已有监控占用的 `step`、`_iter_llm_responses` 和 `execute` 保持函数身份不变。
+`ContextOrganizer` 管理 `MediaPolicy`、runner 集成、原生群聊流水和文字缓存。`additions.py` 统一组合临时内容。已有监控占用的 `step`、`_iter_llm_responses` 和 `execute` 保持函数身份不变。外部 Flow 的记录与格式包装已移除。
 
-`channels/message_schema.py` 与 `channels/relations.py` 提供两个功能域共享的消息投影。显式开启当前消息 metadata 时，`ContextOrganizer` 通过 `additions.py` 写入持久身份块；这一步独立于图片策略，且不进行成员或历史查询。环境摘要继续作为临时内容。字段映射见 [消息字段对齐](message-alignment.md)。
+`channels/messages.py` 从原生事件与 QQ/TG 载荷读取官方消息字段，`message_components.py` 提取显式引用和提及，`meta.py` 渲染并转义 META 表格。`awareness/render.py` 将查询的公共范围、覆盖和统计信息放到一个头部，避免逐条复制。
 
-`context/captions.py` 管理本插件图片转述的历史投影。每个 runner 首次处理请求时清理可识别旧转述，后续步骤保留本轮完整描述，完成或错误结束时再改为短占位。自动工具图片转述使用临时内容标记；`describe_channel_image` 通过工具调用 ID 关联结果，只替换 description，保留调用配对与图片 URI。此文字生命周期在图片模式关闭时仍生效，像素处理继续遵循图片开关。转述缓存与历史投影相互独立。
+`context/group_flow/store.py` 是单进程文件流水，所有日志及共享游标状态操作由同一个锁保护。`service.py` 选取 `cursor < seq < trigger_seq` 的记录，按原生消息 ID 而不是正文去重。`history.py` 在框架会话保存成功后检查当前消息与后续 assistant 记录，再提交游标；仅收到 LLM 响应不提交。边界代次、单调水位和任务归属防止旧任务覆盖 reset/new。`migration.py` 只复制导入和生成导出副本，不改外部插件目录。详见 [流水接管](group-flow.md)。
+
+`context/captions.py` 管理本插件图片转述的历史投影。每个 runner 首次处理请求时清理可识别旧转述，后续步骤保留本轮完整描述，完成或错误结束时移除完整描述，不写入已转述占位。自动工具图片转述使用临时内容标记；`describe_channel_image` 通过工具调用 ID 关联结果，只移除历史 description，保留调用配对与原始图片 URI。此文字生命周期在图片模式关闭时仍生效，像素处理继续遵循图片开关。转述缓存与历史投影相互独立。
 
 ## 聊天感知增强
 

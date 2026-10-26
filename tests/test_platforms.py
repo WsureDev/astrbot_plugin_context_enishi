@@ -98,7 +98,7 @@ async def test_qq_user_history_filter_and_cursor(service):
     }
     result = await service.chat_sources.user_history(event, "99", 2, 1)
     assert len(result["messages"]) == 2 and result["next_cursor"] == "2"
-    assert result["messages"][0]["image_ids"]
+    assert result["messages"][0]["message"][0]["type"] == "Image"
     assert not result["complete"]
     params = event.bot.call_action.call_args.kwargs
     assert params["disable_get_url"] and not params["parse_mult_msg"]
@@ -169,7 +169,7 @@ async def test_tg_hidden_avatar_is_a_capability_error(service):
 async def test_tg_native_message_reads_unseen_reply_payload(service):
     result = await service.chat_sources.message(service.event, "1")
     assert result["source"] == "telegram_payload"
-    assert "native_unseen_reply" in result["image_ids"][0]
+    assert "native_unseen_reply" in result["message"][0]["file"]
 
 
 async def test_tg_arbitrary_message_does_not_claim_bot_api_history(service):

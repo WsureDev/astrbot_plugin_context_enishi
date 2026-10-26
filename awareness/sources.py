@@ -3,15 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ..channels.message_schema import (
-    actor_type,
-    message_projection,
-    qq_message,
-    telegram_message,
-    timestamp,
-)
+from ..channels.messages import local_record, qq_record, telegram_record, unix_time
 from ..channels.native import ImageRef, field
-from ..channels.relations import identifier, telegram_name
 from ..channels.transport import ChannelError, ChannelTransport
 from ..settings import platform_name, scope
 
@@ -43,40 +36,29 @@ class ChatSources(ChannelTransport):
         raise ChannelError("this platform has no avatar adapter")
 
     def _render_qq_message(self, event: Any, message: Any) -> dict:
-        return qq_message(event, message)
+        return qq_record(event, message)
 
-    async def enrich_reply(self, event, projection):
-        """At most one lookup; unavailable authors stay unknown without failing the turn."""
-        reply = projection.get("reply_to")
-        if (
-            platform_name(event) != "qq"
-            or not reply
-            or not reply.get("message_id")
-            or reply.get("sender_id")
-        ):
-            return projection
+    async def enrich_reply(self, event, part):
+        part = dict(part)
+        if platform_name(event) != "qq" or part.get("sender_id") or not part.get("id"):
+            return part
         try:
-            quoted = await self.action(event, "get_msg", message_id=reply["message_id"])
-            actual_chat = str(
-                field(quoted, "group_id", "") or field(quoted, "user_id", "")
-            )
-            if actual_chat and actual_chat != scope(event):
-                raise ChannelError("quoted message belongs to another chat")
-            quoted_id = identifier(field(quoted, "message_id"))
-            if quoted_id is not None and quoted_id != reply["message_id"]:
-                raise ChannelError("quoted message ID mismatch")
+            quoted = await self.action(event, "get_msg", message_id=part["id"])
+            chat = str(field(quoted, "group_id", "") or field(quoted, "user_id", ""))
+            if chat and chat != scope(event):
+                return part
+            mid = field(quoted, "message_id")
+            if mid is not None and str(mid) != part["id"]:
+                return part
             sender = field(quoted, "sender", {})
-            projection["reply_to"] = dict(
-                reply,
-                sender_id=identifier(field(sender, "user_id")),
-                sender_name=reply.get("sender_name")
-                or field(sender, "card")
-                or field(sender, "nickname")
-                or None,
-            )
+            if field(sender, "user_id") is not None:
+                part["sender_id"] = str(field(sender, "user_id"))
+            name = field(sender, "card") or field(sender, "nickname")
+            if name:
+                part["sender_nickname"] = str(name)
         except ChannelError:
             pass
-        return projection
+        return part
 
     async def message(self, event: Any, message_id: str) -> dict:
         if platform_name(event) == "qq":
@@ -89,17 +71,32 @@ class ChatSources(ChannelTransport):
             if actual_chat and actual_chat != scope(event):
                 raise ChannelError("message belongs to another chat")
             payload = dict(payload)
+            if payload.get("message_id") is not None and str(
+                payload["message_id"]
+            ) != str(message_id):
+                raise ChannelError("message ID mismatch")
             payload.setdefault("message_id", str(message_id))
-            return await self.enrich_reply(
-                event, self._render_qq_message(event, payload)
-            )
+            result = self._render_qq_message(event, payload)
+            for index, part in enumerate(result["message"]):
+                if (
+                    part["type"] != "Reply"
+                    or part.get("sender_id")
+                    or not part.get("id")
+                ):
+                    continue
+                result["message"][index] = await self.enrich_reply(event, part)
+                break
+            return {"source": "napcat", **result}
         if platform_name(event) == "telegram":
             raw = field(event.message_obj, "raw_message")
             message = field(raw, "message") or field(raw, "effective_message")
             for candidate in (message, field(message, "reply_to_message")):
                 if str(field(candidate, "message_id", "")) != str(message_id):
                     continue
-                return telegram_message(event, candidate)
+                return {
+                    "source": "telegram_payload",
+                    **telegram_record(event, candidate),
+                }
             raise ChannelError(
                 "Telegram Bot API cannot fetch arbitrary message IDs; this message is absent from the current payload"
             )
@@ -202,7 +199,7 @@ class ChatSources(ChannelTransport):
                     ):
                         raise ChannelError("local history belongs to another scope")
                     created = field(record, "created_at")
-                    stamp = timestamp(created)
+                    stamp = unix_time(created)
                     if stamp is not None and stamp < cutoff:
                         continue
                     local_id = str(field(record, "id", ""))
@@ -212,36 +209,10 @@ class ChatSources(ChannelTransport):
                         and int(local_id) >= int(before_id)
                     ):
                         continue
-                    sender = identifier(field(record, "sender_id"))
+                    sender = str(field(record, "sender_id", ""))
                     if user_id and sender != str(user_id):
                         continue
-                    content = field(record, "content", {}) or {}
-                    parts = field(content, "message", [])
-                    text = "".join(
-                        str(field(p, "text", ""))
-                        if field(p, "type") in {"text", "plain"}
-                        else "[图片，原生ID未保存]"
-                        if field(p, "type") == "image"
-                        else ""
-                        for p in parts
-                    )
-                    projection = message_projection(event)
-                    projection.update(
-                        source="astrbot_local",
-                        local_record_id=local_id,
-                        sender_id=sender,
-                        sender_name=field(record, "sender_name") or None,
-                        actor_type=actor_type(
-                            sender,
-                            projection["self_id"],
-                            field(content, "type") == "bot",
-                        ),
-                        timestamp=stamp,
-                        time_basis="local_record_created" if stamp else "unknown",
-                        text=text[:8000],
-                        coverage="local record only; native message ID, relations and image IDs were not saved",
-                    )
-                    results.append(projection)
+                    results.append(local_record(record))
                 if len(results) >= limit or len(records) < 100:
                     exhausted = len(records) < 100
                     break
@@ -277,10 +248,10 @@ class ChatSources(ChannelTransport):
                 "join_time",
                 "last_sent_time",
             )
-            member = {key: field(result, key) for key in keys}
-            member["user_id"] = identifier(member["user_id"])
-            member["display_name"] = member["card"] or member["nickname"] or None
-            return member
+            output = {key: field(result, key) for key in keys}
+            if output["user_id"] is not None:
+                output["user_id"] = str(output["user_id"])
+            return output
         if platform_name(event) == "telegram":
             chat_id = int(scope(event).split("#")[0])
             result = await self.telegram_call(
@@ -291,7 +262,6 @@ class ChatSources(ChannelTransport):
                 "user_id": str(user.id),
                 "username": user.username,
                 "name": " ".join(filter(None, (user.first_name, user.last_name))),
-                "display_name": telegram_name(user),
                 "status": str(result.status),
             }
         raise ChannelError("this platform has no member adapter")

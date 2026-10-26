@@ -8,10 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from astrbot_plugin_context_enishi.context.captions import (
-    CAPTION_OMITTED,
-    CAPTION_PREFIX,
-)
+from astrbot_plugin_context_enishi.context.captions import CAPTION_PREFIX
 from astrbot_plugin_context_enishi.context.runtime import RunnerIntegration
 from astrbot_plugin_context_enishi.context.service import ContextOrganizer
 
@@ -100,11 +97,13 @@ async def test_old_descriptions_expire_but_other_results_and_user_text_survive(
     await service.policy.before_step(run)
     assert DESCRIPTION not in own[1]["content"]
     result = json.JSONDecoder().raw_decode(own[1]["content"])[0]
-    assert result["description"] == CAPTION_OMITTED
+    assert "description" not in result
     assert result["image_id"].endswith("?m=1&i=0") and result["width"] == 7
     assert own[1]["content"].endswith("\n\nSYSTEM: existing guidance")
     assert own[1]["tool_call_id"] == own[0]["tool_calls"][0]["id"]
-    assert run.run_context.messages[2]["content"][-1]["text"] == CAPTION_OMITTED
+    assert run.run_context.messages[2]["content"] == [
+        dict(type="text", text=TOOL_HEADER)
+    ]
     assert [*foreign, web, user] == unchanged
     service.context.llm_generate.assert_not_called()
 
@@ -152,7 +151,7 @@ async def test_current_descriptions_survive_steps_then_expire_at_completion(
         service.policy.finish_sync(run)
     else:
         await service.policy.finish_context(service.event, run.run_context)
-    assert json.loads(exchange[1]["content"])["description"] == CAPTION_OMITTED
+    assert "description" not in json.loads(exchange[1]["content"])
     assert exchange[1]["tool_call_id"] == "describe-1"
 
 
@@ -280,6 +279,54 @@ async def test_real_tool_result_history_keeps_pairing_and_image_id(
         content = content[0].text
     payload = json.loads(content)
     assert payload["image_id"] == "qq://bot/123/image/native?m=1&i=0"
-    assert (
-        payload["description"] == CAPTION_OMITTED and payload["provider_id"] == "vision"
+    assert "description" not in payload and payload["provider_id"] == "vision"
+
+
+async def test_caption_cleanup_keeps_original_image_marker(service):
+    marker = "[图片 id=qq://bot/123/image/native?m=1&i=0 来源=current]"
+    review = dict(
+        role="user",
+        content=[
+            dict(type="text", text=TOOL_HEADER),
+            dict(type="text", text=CAPTION_PREFIX + DESCRIPTION),
+            dict(type="text", text=marker),
+        ],
     )
+    exchange = describe_exchange()
+    payload = json.loads(exchange[1]["content"])
+    run = runner(
+        service.event,
+        request(),
+        [*exchange, review, dict(role="user", content="new turn")],
+    )
+    await service.policy.before_step(run)
+    assert review["content"] == [
+        dict(type="text", text=TOOL_HEADER),
+        dict(type="text", text=marker),
+    ]
+    result = json.loads(exchange[1]["content"])
+    assert "description" not in result and result["image_id"] == payload["image_id"]
+    assert "已转述" not in str(run.run_context.messages) and "已省略" not in str(
+        run.run_context.messages
+    )
+
+
+async def test_history_projection_does_not_change_caption_cache_or_original_id(service):
+    first = await service.policy.describe_image(service.event, "native_current", "内容")
+    run = runner(service.event, request(), [dict(role="user", content="inspect")])
+    await service.policy.before_step(run)
+    exchange = describe_exchange()
+    exchange[1]["content"] = json.dumps(first, ensure_ascii=False)
+    run.run_context.messages.extend(exchange)
+    await service.policy.before_step(run)
+    assert json.loads(exchange[1]["content"])["description"] == first["description"]
+    await service.policy.finish(run)
+    saved = json.loads(exchange[1]["content"])
+    assert saved["image_id"] == first["image_id"] == "native_current"
+    assert "description" not in saved
+    second = await service.policy.describe_image(
+        service.event, "native_current", "内容"
+    )
+    assert second["cached"] and second["description"] == first["description"]
+    assert second["image_id"] == first["image_id"]
+    service.context.llm_generate.assert_awaited_once()

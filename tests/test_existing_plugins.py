@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib
+import importlib.util
 import inspect
 import logging
 import os
@@ -13,6 +14,7 @@ import sys
 import time
 import traceback
 import uuid
+from contextlib import aclosing
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
@@ -201,7 +203,17 @@ def core_local_tool():
         MessageChain=Chain,
         MessageEventResult=type("MessageEventResult", (), {}),
         CommandResult=type("CommandResult", (), {}),
+        ShellSessionTool=type("ShellSessionTool", (), {}),
+        aclosing=aclosing,
     )
+    helper = root / "astrbot/core/utils/async_generator.py"
+    if helper.is_file():
+        spec = importlib.util.spec_from_file_location(
+            "enishi_test_native_iterator", helper
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        namespace["iterate_in_task"] = module.iterate_in_task
     module = ast.Module(
         body=[
             ast.ImportFrom(

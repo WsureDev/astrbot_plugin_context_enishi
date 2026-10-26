@@ -8,7 +8,6 @@ from ..channels.native import field
 
 TOOL_IMAGE_PREFIX = "[Image from tool '"
 CAPTION_PREFIX = "[工具图片转述] "
-CAPTION_OMITTED = "[图片转述已省略；完整描述仅供原任务使用]"
 
 
 def is_tool_image_message(message):
@@ -34,10 +33,9 @@ def _expired_result(text):
         not isinstance(payload, dict)
         or not isinstance(payload.get("image_id"), str)
         or not isinstance(payload.get("description"), str)
-        or payload["description"] == CAPTION_OMITTED
     ):
         return text
-    payload["description"] = CAPTION_OMITTED
+    del payload["description"]
     return text[:start] + json.dumps(payload, ensure_ascii=False) + text[end:]
 
 
@@ -63,21 +61,13 @@ class CaptionHistory:
                 continue
             content = field(message, "content")
             if is_tool_image_message(message):
-                has_placeholder = any(
-                    field(part, "type") == "text"
-                    and field(part, "text") == CAPTION_OMITTED
-                    for part in content
-                )
                 output = []
                 for part in content:
                     if field(part, "type") == "text" and str(
                         field(part, "text", "")
                     ).startswith(CAPTION_PREFIX):
-                        if not has_placeholder:
-                            output.append(text_factory(text=CAPTION_OMITTED))
-                            has_placeholder = True
-                    else:
-                        output.append(part)
+                        continue
+                    output.append(part)
                 self._set_content(message, output)
             elif (
                 field(message, "role") == "tool"
