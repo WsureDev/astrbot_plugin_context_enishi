@@ -1,0 +1,137 @@
+# 工具与 Skill 收纳
+
+v0.4.5 新增独立能力管理域。它从 AstrBot 的当前登记和每次请求的实际候选集中建立目录，管理工具定义、Skill 正文和工具结果的展开状态。默认关闭；不读取 Lazy Tools 的配置、覆盖项或会话数据。
+
+## 开启
+
+1. 在 AstrBot 将工具模式设为 `full`。
+2. 关闭 Lazy Tools 的工具变换和 Skills 压缩。检测到它仍在变换时，Enishi 停止自己的能力变换，在管理页显示冲突。
+3. 更新 Enishi 后，打开插件页面的「工具与 Skill 管理」。先设置常用能力的组策略或单项覆盖，再启用管理。
+4. 该功能独立于 QQ/TG 图片模式、聊天感知和群聊流水开关。仍服从配置方案、Persona 和框架的工具启停、Skill 选择及权限代理。
+
+管理页支持组显示名、组策略、单项覆盖、默认策略、按组闲置轮数、实时目录核对及会话成本统计。显示名可改，来源 ID 保持稳定。未保存的页面设置不会被后台轮询覆盖。
+
+| 配置 | 默认值 | 含义 |
+| --- | --- | --- |
+| capabilities.enabled | false | 开启工具与 Skill 管理 |
+| capabilities.new_group_mode | folded | 首次发现的组默认收纳，可改为 primary 一级常驻 |
+| capabilities.idle_rounds | 5 | 连续多少个已完成用户轮次未使用后收起 |
+| capabilities.mcp_poll_seconds | 60 | MCP 无通知时的远程目录兜底拉取间隔；0 关闭定期远程拉取 |
+| capabilities.fold_skills | true | 管理结构化 Skill 目录和完整正文 |
+| capabilities.archive_results | true | 将闲置文本／结构化工具结果收纳为可恢复引用 |
+
+默认策略只影响之后首次发现的组。已有组新增工具继承组策略，已有组不会因修改默认值而被重置。单项策略可选跟随组、一级常驻、收纳；当前会话主动卸载产生的抑制状态会保留，显式加载可解除。
+
+## 来源和更新
+
+稳定组 ID 示例：`plugin:astrbot_plugin_context_enishi`、`mcp:reference-image-finder`、`builtin:files`。Skill 按原生来源归组；工作区 Skill 的 ID 包含工作区根路径，避免不同工作区同名 Skill 共用策略。
+
+| 原生入口 | Enishi 的处理 |
+| --- | --- |
+| OnPluginLoadedEvent / OnPluginUnloadedEvent | 合并刷新插件目录 |
+| Context.add_llm_tools | 捕获绕过 add_func 的直接追加和替换 |
+| FunctionToolManager.add_func/remove_func | 捕获注册、替换、删除 |
+| activate/deactivate_llm_tool 及 async 版本 | 捕获启停并协调正在持久化的状态 |
+| MCP _start_mcp_server / _terminate_mcp_client | 核对服务生命周期 |
+| MCPClient.list_tools_and_save | 核对重连后的工具定义；完整读取分页后再发布 |
+| ClientSession._received_notification | 链式保留原通知处理，并将 tools/list_changed 转交后台刷新 |
+| SkillManager 的启停、删除、安装、沙箱缓存更新 | 刷新目录并使已读 Skill 正文失效 |
+| 每个 Runner reset / 上下文处理边界 | 核验旁路列表修改和请求临时工具 |
+
+MCP 通知回调不等待 RPC，防止阻塞 SDK 接收循环。刷新期间收到的新通知会合并后再次核对；分页失败保留原列表。MCP 重连的客户端列表会同步到执行侧原生 MCPTool，同时保留框架的停用设置。卸载只取消 Enishi 自己的目录请求，不关闭 MCP 服务。
+
+请求可用集始终以该次框架装配的候选集为准。全局目录不用于绕过配置方案、Persona 或权限包装；同名工具的最终胜出规则沿用 AstrBot。已开始运行保留来源快照，来源移除或 schema 替换后停止使用旧对象，由下一次请求重新装配。
+
+监听通过可撤销运行时包装实现，不改 AstrBot 源文件。SDK 不提供相应通知入口时使用定期核对；管理页「刷新目录」也可手动拉取。直接修改文件等旁路变化由下一次装配或低频核对发现。
+
+## 模型使用
+
+固定提供三个入口，管理入口自身不参加收纳：
+
+| 工具 | 用途 |
+| --- | --- |
+| enishi_find(query, kind, offset, limit) | 无参数列组；按能力关键词、稳定 ID 或名称查询 group/tool/skill/content，支持分页 |
+| enishi_load(ids) | 展开工具、整组、完整 Skill，或恢复 content: 引用；工具和 Skill 的唯一原名可直接加载 |
+| enishi_unload(ids) | 当前会话主动收起工具、组、Skill 或内容引用 |
+
+查找结果采用 META 表，保留原始完整说明。Skill 条目提供原生路径；加载时返回完整原文引用与路径，工具保留 AstrBot 实际使用的完整 schema、必填项、枚举和原执行器。没有固定字符数截取。
+
+例如：
+
+```text
+enishi_find(query="web search", kind="tool")
+enishi_load(ids=[查找结果中的完整 ID])
+随后直接调用真实工具。
+```
+
+已知 ID 或唯一工具／Skill 原名可直接加载，省去查找步骤。用户明确点名且唯一匹配的项目，可在模型请求装配前预加载；该过程不额外调用路由模型，也不执行目标业务工具。
+
+展开后的工具集保持同一个 ToolSet 对象，下一模型步骤即可使用。批量加载先检查全部目标、读取需要的原文，再提交状态；失败保留原选择。内容和定义超过当前模型可用预算时明确返回错误，原文不被裁剪。schema 开销使用与框架一致的字符估算，并从当前请求的消息预算中预留；管理页明确标为估算值。
+
+## Skill 目录与正文
+
+从 `astr_main_agent` 实际调用的 `build_skills_prompt(SkillInfo[])` 接入，接收到的是已经过当前配置和 Persona 过滤的 Skill 元数据。只替换这个函数生成的 Skills 段，保留人格、沙箱规则、其他插件提示和原生的触发、渐进读取、协调、失败处理规则。
+
+收纳后由查找入口提供完整说明，加载入口通过当前运行环境完整读取 SKILL.md；不生成前 50 字简介。正文以带来源和绝对路径的临时内容部分附加到当前用户消息，保持原来的消息轮次边界。原生序列化不保存这些临时部分，后续需要时由租约重新展开。
+
+本地 Skill 读取已注册文件；沙箱 Skill 通过原生 booter.fs 读取，不把沙箱路径当作主机路径，也不使用文件工具的预览长度。原生文件读取工具访问已注册 Skill 的绝对路径时，其结果和活动也归入该 Skill 的生命周期；显式行范围仍保留原生读取语义。
+
+本地文件变化、原生 Skill 管理 API 更新，以及 Enishi 重载后的第一次继续使用，会校验并重新读取已展开的正文。远端没有文件变更通知时，以最近一次完整读取为准；显式 enishi_load 会重新读取当前源。历史内容引用代表当时的快照。
+
+## 五轮闲置与内容恢复
+
+一次用户请求及其完整工具链算一轮；普通工具步骤、Provider 重试、群内未触发模型的闲聊不额外计数。失败、取消不推进已完成轮数。cron 轮次不推进用户轮数。实际工具调用开始即记为使用，失败调用也记；后台调用同样刷新活动记录。
+
+- 一级常驻项目默认豁免自动卸载。
+- 单独展开的工具按工具计时；整组展开后，组内任一工具调用可续租整组。
+- Skill 正文与每一份工具结果分别计时。新搜索不会给该服务所有旧结果续命。
+- 正在执行的请求保护它持有的能力。到期只影响上下文投影，不取消业务执行或关闭 MCP。
+- 当前任务始终保留框架原有结果视图；完整文本／结构化数据在框架生成大结果预览之前存档。
+- 连续五个已完成轮次未使用后，下一次装配收起定义和长结果。短于引用回执的结果自动保留，避免收纳反而增加上下文；显式卸载仍会生成引用。
+
+例如第 10 轮使用某工具，第 11—15 轮都没有再用，则第 16 轮开始前收起。显式加载或读取可续租。后台生成和交付仍由 AstrBot 处理，收纳不删除其输入或原文。
+
+工具结果保留 role、tool_call_id 和调用配对；收起的内容使用如下可恢复引用：
+
+```json
+{"enishi_content_ref":"content:<完整哈希>","source":"<来源 ID>","restore_with":"enishi_load"}
+```
+
+恢复时取回存档原文。如果原调用轮次已被框架裁掉，仍可将原文作为请求级临时部分展开，避免补造一条没有对应调用的 tool 消息。同名或重复调用 ID 的结果按内容和来源分别绑定，避免新结果覆盖旧结果。
+
+图片继续沿用现有完整原生 ID、来源读取和转述缓存策略。原图和本插件的转述结果不复制到普通内容存档。
+
+## 数据和运行边界
+
+本插件数据目录下：
+
+```text
+capabilities/
+  state.json             # 来源组策略、单项覆盖、会话租约、引用、成本计数
+  content/<sha256>.json   # 完整文本/结构化原文及原始返回对象
+```
+
+会话按完整 unified_msg_origin 与 conversation ID 隔离，无 conversation ID 的临时请求单独隔离。配置方案或 Persona 不允许的工具、Skill 不会因全局目录而被加载。归档原文不会因上下文卸载被删除；磁盘清理与上下文闲置是不同策略。
+
+关闭管理或卸载恢复原有工具集及本模块拥有的提示部分，不批量重写旧会话。已有收纳引用和文件保留，重新启用后可恢复。Monitor 继续记录真实 Provider 输入及原工具返回，完整记录不会为节省模型上下文而被截断。
+
+目前采用固定默认五轮与按组覆盖，记录管理步骤、加载耗时、schema 估算、自动收起和两轮内重新加载。频繁短期重载的小工具适合提高闲置轮数或常驻；大的低频组适合收纳。没有增加独立的路由模型或组合子代理分派。
+
+本版的文件状态适用于单进程 AstrBot。运行时包装在卸载后变为惰性并排空自己的文件事务；多进程共享写入不在本版本保证内。
+
+## 开发验证
+
+```bash
+pip install -r requirements-dev.txt
+ASTRBOT_SOURCE=/path/to/AstrBot pytest -q
+bun install --frozen-lockfile
+bunx playwright install chromium
+bun run test:ui
+bun run check:ui
+```
+
+设置 MONITOR_CURRENT_SOURCE、MONITOR_COMPAT_SOURCE、COMFY_COMPAT_SOURCE 可使用实际插件源码运行兼容回归。浏览器测试使用模拟 API，不访问生产 AstrBot。可设 ENISHI_CHROMIUM_PATH 复用现有浏览器，ENISHI_SCREENSHOT_DIR 保存临时截图。
+
+本次在 AstrBot v4.28.0（a412146）、v4.29.3（f61a7f4）及已核对的最新源码（832fc6d）上分别运行完整回归，三组均为 **229 passed**、无跳过。使用 Monitor 0.4.1、0.4.3 与 Comfy 2.4.2 的实际源码验证包装兼容；管理页另有 **4 项 Bun/Chromium 测试通过**。Ruff、前端格式和 git diff 检查通过。
+
+覆盖新组默认策略、组改名后继承、单项卸载持久化、五轮闲置、失败轮次、并发保护、当前请求预算、完整大结果与结构化数据、调用 ID 重用、Skill 原文更新与沙箱读取、SDK 通知不阻塞、MCP 分页失败回滚，以及启动／卸载后钩子恢复。没有操作生产容器或调用真实模型做验证。

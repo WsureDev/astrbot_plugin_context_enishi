@@ -5,3 +5,7 @@ dist/
 *.pyc
 .venv/
 .test-astrbot/
+.test-monitor/
+.test-monitor-old/
+node_modules/
+test-results/

@@ -12,6 +12,8 @@ from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 from .awareness.service import ChatAwareness
+from .capabilities.service import CapabilityService
+from .capabilities.web import CapabilityAPI
 from .channels.transport import ChannelError
 from .context.additions import append_temporary_text
 from .context.service import ContextOrganizer
@@ -30,6 +32,8 @@ class EnishiPlugin(Star):
         self.settings = Settings(config)
         self.organizer = ContextOrganizer(context, self.settings, self.participates)
         self.awareness = ChatAwareness(context, self.settings, self.participates)
+        self.capabilities = CapabilityService(context, config)
+        self.capability_api = CapabilityAPI(context, self.capabilities)
 
     async def initialize(self):
         data = Path(StarTools.get_data_dir(PLUGIN))
@@ -37,11 +41,32 @@ class EnishiPlugin(Star):
         await self.organizer.initialize(
             data, temporary, TextPart, ToolLoopAgentRunner, FunctionToolExecutor
         )
+        try:
+            await self.capabilities.initialize(
+                data / "capabilities", ToolLoopAgentRunner, FunctionToolExecutor
+            )
+            self.capability_api.install()
+        except BaseException:
+            self.capability_api.close()
+            try:
+                await self.capabilities.close()
+            finally:
+                await self.organizer.aclose()
+            raise
         logger.info("[%s] context organization and chat awareness initialized", PLUGIN)
 
     @filter.on_astrbot_loaded()
     async def attach_group_history_save(self):
         self.organizer.flow.attach_save_hook()
+        self.capabilities.request_refresh()
+
+    @filter.on_plugin_loaded()
+    async def refresh_loaded_capabilities(self, metadata):
+        self.capabilities.request_refresh()
+
+    @filter.on_plugin_unloaded()
+    async def refresh_unloaded_capabilities(self, metadata):
+        self.capabilities.request_refresh()
 
     @filter.event_message_type(
         filter.EventMessageType.GROUP_MESSAGE, priority=2_147_483_627
@@ -84,6 +109,7 @@ class EnishiPlugin(Star):
             # The state-transition guard covers error and aborted completion.
             await self.organizer.policy.finish_context(event, run_context)
             self.organizer.flow.finish(event, run_context, response)
+        await self.capabilities.finish_context(run_context)
 
     @filter.on_using_llm_tool(priority=-2_147_483_647)
     async def reserve_background_images(self, event: AstrMessageEvent, tool, tool_args):
@@ -304,4 +330,8 @@ class EnishiPlugin(Star):
             yield event.plain_result(str(exc))
 
     async def terminate(self):
-        await self.organizer.aclose()
+        self.capability_api.close()
+        try:
+            await self.capabilities.close()
+        finally:
+            await self.organizer.aclose()

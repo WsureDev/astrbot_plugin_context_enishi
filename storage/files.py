@@ -1,3 +1,5 @@
+"""Atomic files and cancellation-safe worker transactions."""
+
 from __future__ import annotations
 
 import asyncio

@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from astrbot_plugin_context_enishi.awareness.service import ChatAwareness
+from astrbot_plugin_context_enishi.capabilities.service import CapabilityService
+from astrbot_plugin_context_enishi.capabilities.web import CapabilityAPI
 from astrbot_plugin_context_enishi.channels.native import field
 from astrbot_plugin_context_enishi.channels.transport import ChannelError
 from astrbot_plugin_context_enishi.context.additions import append_temporary_text
@@ -47,6 +49,8 @@ def plugin_class():
         PLUGIN=PLUGIN,
         ContextOrganizer=ContextOrganizer,
         ChatAwareness=ChatAwareness,
+        CapabilityService=CapabilityService,
+        CapabilityAPI=CapabilityAPI,
         Settings=Settings,
         migrate_channel_settings=migrate_channel_settings,
         field=field,

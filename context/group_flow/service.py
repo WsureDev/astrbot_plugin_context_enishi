@@ -23,7 +23,7 @@ from ...channels.meta import (
 )
 from ...channels.native import field
 from ...channels.transport import ChannelError
-from .files import run_io
+from ...storage.files import run_io
 from .history import HistorySaveHook, contains_proof
 from .replies import SelfReplies
 from .store import FlowStore

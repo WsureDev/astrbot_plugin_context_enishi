@@ -1,11 +1,13 @@
 # 模块边界
 
-Context Enishi 的两个功能域通过 `main.py` 组合，依赖共同的渠道读取层和配置解析。功能域彼此不导入、不读取对方的开关。
+Context Enishi 的三个功能域通过 `main.py` 组合，依赖共同的渠道读取层和原子文件操作。功能域彼此不导入、不读取对方的开关。
 
 ```mermaid
 flowchart TB
     Entry[main.py：事件与工具入口] --> Organizer[context：上下文整理]
     Entry --> Awareness[awareness：聊天感知增强]
+    Entry --> Capabilities[capabilities：工具与 Skill 收纳]
+    Capabilities --> Storage[storage/files：原子文件与事务排空]
     Organizer --> Media[channels/media：图片来源与临时文件]
     Awareness --> Transport[channels/transport：只读渠道调用]
     Media --> Transport
@@ -13,6 +15,7 @@ flowchart TB
     Awareness --> Native
     Organizer --> Flow[context/group_flow：记录、边界与保存确认]
     Flow --> Meta[channels/messages 与 meta：官方字段及 META 渲染]
+    Flow --> Storage
     Awareness --> Meta
     Entry --> Settings[settings：渠道、功能域与适用范围]
 ```
@@ -21,9 +24,11 @@ flowchart TB
 | --- | --- | --- |
 | `context/` | 请求内容整理、增量流水、保存确认、图片隔离、转述缓存与临时图片生命周期 | 不承担成员统计或群聊事实查询 |
 | `awareness/` | 获取人员、环境、消息、头像、角色和已观察到的发言活动；生成可选摘要文本 | 不改模型消息历史、不调用 LLM、不下载或保存图片 |
+| `capabilities/` | 来源目录、策略、工具和 Skill 展开、内容存档及闲置租约 | 使用请求实际候选集和原权限代理；不管理图片像素或群聊流水 |
 | `channels/` | 读取来源渠道、解析原生标识；图片层为明确消费者提供临时文件 | 不决定模型上下文策略或人员排序 |
-| `settings.py` | 按渠道及机器人／群／话题选择两个独立功能域的配置 | 图片模式不控制聊天感知开关 |
-| `main.py` | 注册 AstrBot 事件与稳定工具名，组合两个功能域 | 不直接实现渠道分页或图片改写 |
+| `storage/` | 原子文件、可排空工作线程事务 | 不定义业务生命周期或数据范围 |
+| `settings.py` | 按渠道及机器人／群／话题选择上下文整理与聊天感知配置 | 能力收纳由独立全局策略和会话状态管理 |
+| `main.py` | 注册 AstrBot 事件与稳定工具名，组合三个功能域 | 不直接实现渠道分页或图片改写 |
 
 ## 上下文整理
 
@@ -45,4 +50,6 @@ QQ 默认最近排序使用 NapCat 成员快照；频次排序读取协议可访
 
 ## 后续扩展
 
-新增消息压缩、历史保留或内容整理策略放入 `context/`；新增人员关系、会话状态或聊天环境资料放入 `awareness/`；新的 QQ/TG 来源能力先放入 `channels/`。保持工具名稳定、按渠道隔离配置，并为数据范围与截断行为提供可验证的说明。
+`capabilities/catalog.py` 识别原生来源和不可混淆的稳定 ID，`registry.py` 监听工具登记和 MCP 列表变化。`skills.py` 仅处理原生构建函数生成的 Skill 段；`activation.py` 原子加载原始定义和正文。`controller.py` 管理按会话的租约，`results.py` 在框架预览前存档完整返回，`resources.py` 将到期结果收纳为引用并临时恢复全文。`integration.py` 在 runner 装配和原执行器内部边界接入，保留 Monitor 使用的公共函数对象；`web.py` 和原生插件页提供管理界面。详见 [工具与 Skill 收纳](capabilities.md)。
+
+新增消息压缩、历史保留或群聊内容整理策略放入 `context/`；新增人员关系、会话状态或聊天环境资料放入 `awareness/`；新增能力目录与工具/Skill 生命周期放入 `capabilities/`；新的 QQ/TG 来源能力先放入 `channels/`。保持工具名稳定、按会话隔离状态，并为数据范围与截断行为提供可验证的说明。

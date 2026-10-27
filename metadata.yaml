@@ -1,10 +1,14 @@
 name: astrbot_plugin_context_enishi
 display_name: Context Enishi
-desc: 使用紧凑 META 整理聊天上下文，内置群聊增量流水，支持图片按需转述及人员与历史查询。
-version: v0.4.4
+desc: 使用紧凑 META 整理聊天上下文，内置群聊流水、工具与 Skill 收纳，支持图片按需转述及人员与历史查询。
+version: v0.4.5
 author: WsureDev
 repo: https://github.com/WsureDev/astrbot_plugin_context_enishi
 astrbot_version: ">=4.28.0"
 support_platforms:
   - aiocqhttp
   - telegram
+pages:
+  - name: capabilities
+    title: 工具与 Skill 管理
+    entry_file: index.html

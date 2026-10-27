@@ -24,9 +24,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/checkout@v4
+        with:
+          repository: WsureDev/astrbot_plugin_llm_monitor
+          ref: 7fadd31fb9cafdee097276038b71c70a79b1929b
+          path: .test-monitor
+      - uses: actions/checkout@v4
+        with:
+          repository: WsureDev/astrbot_plugin_llm_monitor
+          ref: a9ad4e1d1bd4b28083510549a4181e8c7a9631f1
+          path: .test-monitor-old
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest -q
         env:
           ASTRBOT_SOURCE: .test-astrbot
+          MONITOR_CURRENT_SOURCE: .test-monitor
+          MONITOR_COMPAT_SOURCE: .test-monitor-old
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - run: bun install --frozen-lockfile
+      - run: bun run check:ui
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:ui

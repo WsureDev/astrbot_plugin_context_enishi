@@ -354,5 +354,55 @@
         "hint": "图片等非文本消息保留原生定位或组件标记。"
       }
     }
+  },
+  "capabilities": {
+    "type": "object",
+    "description": "工具与 Skill 收纳",
+    "hint": "独立于渠道图片和群聊流水。详细组策略在插件页面「工具与 Skill 管理」设置；启用前关闭 Lazy Tools 的工具和 Skills 变换。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用工具与 Skill 管理",
+        "default": false
+      },
+      "new_group_mode": {
+        "type": "string",
+        "description": "新增组的默认策略",
+        "default": "folded",
+        "options": [
+          "folded",
+          "primary"
+        ],
+        "labels": [
+          "收纳，可发现和加载",
+          "一级常驻，始终显示完整定义"
+        ],
+        "hint": "仅作用于首次发现的组。已有组新增工具继承原组策略。"
+      },
+      "idle_rounds": {
+        "type": "int",
+        "description": "连续未使用多少轮后收起",
+        "default": 5,
+        "hint": "一次用户请求及其完整工具链算一轮。工具内部步骤、重试、闲聊不计；可在管理页按组覆盖。"
+      },
+      "mcp_poll_seconds": {
+        "type": "int",
+        "description": "MCP 工具列表兜底刷新间隔（秒）",
+        "default": 60,
+        "hint": "通知触发实时刷新；0 关闭定期远程拉取，仍会核对本地目录。"
+      },
+      "fold_skills": {
+        "type": "bool",
+        "description": "折叠 Skill 目录和已加载正文",
+        "default": true,
+        "hint": "只处理原生 Skill 构建入口；完整正文按需读取和恢复，不截断说明或改写其他提示词。"
+      },
+      "archive_results": {
+        "type": "bool",
+        "description": "闲置工具结果收纳为可恢复引用",
+        "default": true,
+        "hint": "当前任务保留完整文本结果；收起后保留调用配对和完整存档。图片仍沿用原生 ID 和图片策略。"
+      }
+    }
   }
 }

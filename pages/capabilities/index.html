@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Enishi 工具与 Skill 管理</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="/api/plugin/page/bridge-sdk.js"></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="brand">CONTEXT ENISHI</p>
+          <h1>工具与 Skill 管理</h1>
+          <p>常用能力放在一级，其他能力收纳后按需展开。完整定义和原文保留。</p>
+        </div>
+        <button id="refresh" type="button">刷新目录</button>
+      </header>
+      <p id="status" role="status">正在连接…</p>
+      <p id="error" role="alert" hidden></p>
+      <form id="settings">
+        <label class="check"><input id="enabled" type="checkbox" />启用管理</label>
+        <label
+          >新组默认策略<select id="new-group-mode">
+            <option value="folded">收纳</option>
+            <option value="primary">一级常驻</option>
+          </select></label
+        >
+        <label>默认闲置轮数<input id="idle-rounds" type="number" min="1" value="5" /></label>
+        <label class="check"><input id="fold-skills" type="checkbox" />折叠 Skill</label>
+        <label class="check"><input id="archive-results" type="checkbox" />收纳闲置结果</label>
+        <button type="submit">保存设置</button>
+      </form>
+      <p class="hint">
+        新工具继承原组策略；默认策略只用于首次发现的组。一次用户请求及其完整工具链算一轮，常驻能力保持展开。
+      </p>
+      <nav>
+        <label
+          >搜索能力<input id="search" type="search" placeholder="工具名、Skill 或来源组" /></label
+        ><span id="count"></span>
+      </nav>
+      <section id="groups" aria-label="能力分组"></section>
+      <section class="session-panel">
+        <h2>会话与使用成本</h2>
+        <p>查看已完成轮数、自动收起和短期重新加载。上下文收起后，完整资料仍可按引用恢复。</p>
+        <div id="sessions"></div>
+      </section>
+    </main>
+  </body>
+</html>

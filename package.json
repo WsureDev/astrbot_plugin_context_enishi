@@ -1,0 +1,14 @@
+{
+  "name": "astrbot-plugin-context-enishi-dev",
+  "private": true,
+  "packageManager": "bun@1.4.4",
+  "scripts": {
+    "test:ui": "bun test tests/capability-page.test.js",
+    "format:ui": "prettier --write pages/capabilities tests/capability-page.test.js package.json",
+    "check:ui": "prettier --check pages/capabilities tests/capability-page.test.js package.json"
+  },
+  "devDependencies": {
+    "playwright": "1.55.0",
+    "prettier": "3.6.2"
+  }
+}
