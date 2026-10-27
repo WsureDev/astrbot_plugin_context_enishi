@@ -29,9 +29,9 @@ def test_ui_is_channel_first_with_native_model_selectors():
         items = template["items"]["context"]["items"]
         assert next(iter(items)) == "image_mode"
         assert items["image_mode"]["labels"] == [
-            "关闭",
-            "仅本轮消息及引用允许图片内容",
-            "始终使用图片 ID 引用图片",
+            "关闭图片管理",
+            "本轮放行",
+            "始终使用图片ID",
         ]
         assert items["caption_provider_id"]["_special"] == "select_provider"
         assert items["caption_fallback_provider_ids"]["_special"] == "select_providers"

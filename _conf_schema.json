@@ -63,19 +63,19 @@
             "items": {
               "image_mode": {
                 "type": "string",
-                "description": "图片处理方式",
+                "description": "主模型图片输入方式",
                 "options": [
                   "disabled",
                   "current_turn",
                   "reference_only"
                 ],
                 "labels": [
-                  "关闭",
-                  "仅本轮消息及引用允许图片内容",
-                  "始终使用图片 ID 引用图片"
+                  "关闭图片管理",
+                  "本轮放行",
+                  "始终使用图片ID"
                 ],
                 "default": "disabled",
-                "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+                "hint": "本轮放行：当前消息及引用（含合并转发）的图片像素会发送给主模型，后续历史只留原生 ID。始终使用图片ID：主模型不接收图片像素，通过 describe_channel_image 按需转述。关闭图片管理：使用 AstrBot 原有行为。"
               },
               "caption_provider_id": {
                 "type": "string",
@@ -187,19 +187,19 @@
             "items": {
               "image_mode": {
                 "type": "string",
-                "description": "图片处理方式",
+                "description": "主模型图片输入方式",
                 "options": [
                   "disabled",
                   "current_turn",
                   "reference_only"
                 ],
                 "labels": [
-                  "关闭",
-                  "仅本轮消息及引用允许图片内容",
-                  "始终使用图片 ID 引用图片"
+                  "关闭图片管理",
+                  "本轮放行",
+                  "始终使用图片ID"
                 ],
                 "default": "disabled",
-                "hint": "关闭保留框架行为；允许本轮图片时，历史只留 ID；始终使用 ID 时，通过转述工具查看图片。"
+                "hint": "本轮放行：当前消息及引用中的图片像素会发送给主模型，后续历史只留原生 ID。始终使用图片ID：主模型不接收图片像素，通过 describe_channel_image 按需转述。关闭图片管理：使用 AstrBot 原有行为。"
               },
               "caption_provider_id": {
                 "type": "string",

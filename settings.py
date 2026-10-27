@@ -7,9 +7,9 @@ MODE_DISABLED = "disabled"
 MODE_CURRENT_TURN = "current_turn"
 MODE_REFERENCE_ONLY = "reference_only"
 MODE_LABELS = {
-    MODE_DISABLED: "关闭",
-    MODE_CURRENT_TURN: "仅本轮消息及引用允许图片内容",
-    MODE_REFERENCE_ONLY: "始终使用图片 ID 引用图片",
+    MODE_DISABLED: "关闭图片管理",
+    MODE_CURRENT_TURN: "本轮放行",
+    MODE_REFERENCE_ONLY: "始终使用图片ID",
 }
 CONTEXT_KEYS = (
     "image_mode",
