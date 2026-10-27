@@ -27,11 +27,13 @@ def validate_settings(value, config):
     for key in ("enabled", "fold_skills", "archive_results"):
         if key in value and type(value[key]) is not bool:
             raise ValueError(key + " 必须是布尔值")
-    for key in ("idle_rounds", "mcp_poll_seconds"):
+    for key in ("idle_rounds", "mcp_poll_seconds", "mcp_refresh_timeout_seconds"):
         if key in value and (type(value[key]) is not int or value[key] < 0):
             raise ValueError(key + " 必须是非负整数")
     if value.get("idle_rounds") == 0:
         raise ValueError("闲置轮数必须大于 0")
+    if value.get("mcp_refresh_timeout_seconds") == 0:
+        raise ValueError("MCP 目录请求超时必须大于 0")
     updated = {**config.get("capabilities", {}), **value}
     CapabilityPolicy.read({"capabilities": updated})
     return updated

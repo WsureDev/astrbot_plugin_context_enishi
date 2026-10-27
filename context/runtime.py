@@ -8,6 +8,7 @@ from weakref import WeakKeyDictionary, ref
 
 from ..channels.media import TRANSFER_CONSUMER, TRANSFER_CONTEXT
 from ..channels.native import field
+from ..observability import Diagnostics
 from ..settings import MODE_REFERENCE_ONLY
 from .compatibility import LegacyBatchDelivery
 from .history import budget as history_budget
@@ -147,6 +148,9 @@ class RunnerIntegration:
         history = history_budget.HistoryWindow(
             self.owner.settings, runner, self.owner.policy.text_factory
         )
+        diagnostics = getattr(
+            self.owner, "diagnostics", Diagnostics(self.owner.settings.config)
+        )
         event = field(field(runner.run_context, "context"), "event")
         if event is not None:
             self.owner.channels.register_runner(event, runner.run_context)
@@ -159,15 +163,20 @@ class RunnerIntegration:
             if integration.current(generation) and integration.owner.enabled_for_runner(
                 runner
             ):
-                await integration.owner.policy.before_step(runner)
+                async with diagnostics.span("media.before_step", event):
+                    await integration.owner.policy.before_step(runner)
                 messages = (
                     args[0]
                     if args
                     else kwargs.get("messages", runner.run_context.messages)
                 )
-                if history.apply(messages):
-                    kwargs = {**kwargs, "trusted_token_usage": 0}
-            return await process(*args, **kwargs)
+                async with diagnostics.span(
+                    "history.budget", event, messages=len(messages)
+                ):
+                    if history.apply(messages):
+                        kwargs = {**kwargs, "trusted_token_usage": 0}
+            async with diagnostics.span("context.native_process", event):
+                return await process(*args, **kwargs)
 
         wrapped_process._channel_media_original = process
         manager.process = wrapped_process

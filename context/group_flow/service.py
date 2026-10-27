@@ -23,6 +23,7 @@ from ...channels.meta import (
 )
 from ...channels.native import field
 from ...channels.transport import ChannelError
+from ...observability import Diagnostics
 from ...storage.files import run_io
 from .history import HistorySaveHook, contains_proof
 from .replies import SelfReplies
@@ -56,6 +57,7 @@ class GroupFlow:
     def __init__(self, owner):
         self.owner = owner
         self.context, self.settings = owner.context, owner.settings
+        self.diagnostics = Diagnostics(self.settings.config)
         self.store = None
         self.hook = HistorySaveHook(self)
         self.pending = {}
@@ -85,7 +87,8 @@ class GroupFlow:
     async def _io(self, method, *args):
         if self.closed:
             raise ChannelError("Enishi 流水已卸载")
-        return await run_io(method, *args, tasks=self.work)
+        async with self.diagnostics.span("flow.io", operation=method.__name__):
+            return await run_io(method, *args, tasks=self.work)
 
     def conflict(self, event):
         getter = getattr(self.context, "get_registered_star", None)
@@ -168,7 +171,7 @@ class GroupFlow:
         if lock is None:
             lock = asyncio.Lock()
             self.locks[scope] = lock
-        async with lock:
+        async with self.diagnostics.lock(lock, "flow.lock", event):
             if self.closed:
                 return None
             return await self._io(

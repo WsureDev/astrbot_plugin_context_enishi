@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..channels.media import MediaSources
 from ..channels.native import field
 from ..identity import caption_data_directory
+from ..observability import Diagnostics
 from ..settings import MODE_DISABLED
 from .group_flow.service import GroupFlow
 from .media import MediaPolicy
@@ -15,6 +16,7 @@ class ContextOrganizer:
 
     def __init__(self, context, settings, participates):
         self.context, self.settings, self.participates = context, settings, participates
+        self.diagnostics = Diagnostics(settings.config)
         self.cache = self.channels = self.policy = None
         self.integration = RunnerIntegration(self)
         self.flow = GroupFlow(self)

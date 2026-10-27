@@ -162,6 +162,7 @@ async def test_mcp_notification_does_not_block_receive_loop_and_preserves_callba
     observer = RegistryObserver(capabilities)
     observer.install(type("Manager", (), {}), sdk_class=SDK)
     client, session = Client(), SDK()
+    client.session = session
     observer.sessions[session] = client
     notification = SimpleNamespace(
         root=SimpleNamespace(method="notifications/tools/list_changed")

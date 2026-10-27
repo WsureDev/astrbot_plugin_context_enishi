@@ -355,6 +355,35 @@
       }
     }
   },
+  "diagnostics": {
+    "type": "object",
+    "description": "请求诊断日志",
+    "hint": "使用 AstrBot logger 记录接收、唤醒等待、原生准备、插件处理、目录刷新和结束阶段；异常保留完整堆栈。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用阶段诊断",
+        "default": true
+      },
+      "log_group_messages": {
+        "type": "bool",
+        "description": "记录群消息进入状态",
+        "default": true,
+        "hint": "记录消息 ID、唤醒标记、@目标、自身 ID 和插件范围，便于判断未唤醒与处理卡住的区别。"
+      },
+      "slow_phase_seconds": {
+        "type": "int",
+        "description": "慢阶段提示阈值（秒）",
+        "default": 10,
+        "hint": "超过此时间仍未结束时提示 waiting；只提示，不取消业务处理。0 关闭慢阶段提醒。"
+      },
+      "include_task_stacks": {
+        "type": "bool",
+        "description": "慢阶段记录等待栈",
+        "default": true
+      }
+    }
+  },
   "history_budget": {
     "type": "object",
     "description": "历史上下文范围",
@@ -420,6 +449,12 @@
         "description": "MCP 工具列表兜底刷新间隔（秒）",
         "default": 60,
         "hint": "通知触发实时刷新；0 关闭定期远程拉取，仍会核对本地目录。"
+      },
+      "mcp_refresh_timeout_seconds": {
+        "type": "int",
+        "description": "MCP 目录刷新超时（秒）",
+        "default": 15,
+        "hint": "完整分页目录请求的超时，须大于 0。失败保留原目录，不取消业务工具调用；已关闭的同一会话停止轮询，原生重连后恢复。"
       },
       "fold_skills": {
         "type": "bool",

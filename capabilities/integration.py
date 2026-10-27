@@ -30,6 +30,7 @@ class CapabilityIntegration:
             request = bound.arguments.get("request")
             context = bound.arguments.get("run_context")
             event = field(field(context, "context"), "event")
+            self.service.diagnostics.emit("runner.reset.enter", event)
             run = None
             if request is not None and self.service.enabled(event):
                 original_tools = getattr(request, "func_tool", None)
@@ -41,9 +42,12 @@ class CapabilityIntegration:
                     limit = field(
                         field(provider, "provider_config", {}), "max_context_tokens", 0
                     )
-                    run = await self.service.prepare(
-                        event, request, context_limit=limit
-                    )
+                    async with self.service.diagnostics.span(
+                        "capabilities.prepare", event
+                    ):
+                        run = await self.service.prepare(
+                            event, request, context_limit=limit
+                        )
                     if not self.patches.active or not self.service.enabled(event):
                         raise ValueError("能力管理已在请求装配期间关闭")
                 except Exception as exc:
@@ -57,7 +61,8 @@ class CapabilityIntegration:
                     request.system_prompt = prompt
                     self.service.failure("request preparation rolled back", exc)
             try:
-                result = await original(runner, *args, **kwargs)
+                async with self.service.diagnostics.span("runner.native_reset", event):
+                    result = await original(runner, *args, **kwargs)
             except BaseException:
                 if run is not None:
                     request.func_tool = run.full_tool_set
@@ -116,7 +121,10 @@ class CapabilityIntegration:
             async def process(messages, *args, **kwargs):
                 if self.patches.active and self.service.enabled(run.event):
                     try:
-                        await run.before_step(messages, self.service.message_class)
+                        async with self.service.diagnostics.span(
+                            "capabilities.project", run.event, messages=len(messages)
+                        ):
+                            await run.before_step(messages, self.service.message_class)
                     except (OSError, ValueError, TypeError) as exc:
                         run.resources.remove_ephemeral(messages)
                         self.service.failure(
@@ -148,6 +156,13 @@ class CapabilityIntegration:
             result = original(runner, *args, **kwargs)
             run = self.runs.get(runner)
             if run is not None and runner.done():
+                self.service.diagnostics.emit(
+                    "runner.done",
+                    run.event,
+                    state=str(
+                        field(field(runner, "_state"), "name", field(runner, "_state"))
+                    ),
+                )
                 state = field(runner, "_state")
                 name = str(field(state, "name", state))
                 aborted = getattr(runner, "was_aborted", lambda: False)()

@@ -14,11 +14,16 @@ from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from .awareness.service import ChatAwareness
 from .capabilities.service import CapabilityService
 from .capabilities.web import CapabilityAPI
+from .channels.native import field
 from .channels.transport import ChannelError
 from .context.additions import append_temporary_text
 from .context.service import ContextOrganizer
 from .identity import PLUGIN
 from .settings import MODE_LABELS, Settings, migrate_channel_settings, platform_name
+
+EARLY_GROUP_PRIORITY = 2_147_483_627
+LAST_LLM_PRIORITY = -2_147_483_647
+BOUNDARY_PRIORITY = -2_147_483_627
 
 
 class EnishiPlugin(Star):
@@ -69,15 +74,25 @@ class EnishiPlugin(Star):
         self.capabilities.request_refresh()
 
     @filter.event_message_type(
-        filter.EventMessageType.GROUP_MESSAGE, priority=2_147_483_627
+        filter.EventMessageType.GROUP_MESSAGE, priority=EARLY_GROUP_PRIORITY
     )
     async def record_group_message(self, event: AstrMessageEvent):
+        self.organizer.diagnostics.received(event)
         try:
-            await self.organizer.flow.record(event)
+            async with self.organizer.diagnostics.span("flow.record", event):
+                await self.organizer.flow.record(event)
         except (ChannelError, OSError, ValueError):
             logger.exception("[%s] could not record group flow", PLUGIN)
 
-    @filter.on_decorating_result(priority=-2_147_483_627)
+    @filter.event_message_type(
+        filter.EventMessageType.GROUP_MESSAGE, priority=LAST_LLM_PRIORITY
+    )
+    async def log_group_dispatch_complete(self, event: AstrMessageEvent):
+        self.organizer.diagnostics.emit(
+            "message.handlers_complete", event, wake=field(event, "is_wake", False)
+        )
+
+    @filter.on_decorating_result(priority=BOUNDARY_PRIORITY)
     async def mark_group_boundary(self, event: AstrMessageEvent):
         try:
             await self.organizer.flow.boundary(event)
@@ -90,28 +105,61 @@ class EnishiPlugin(Star):
             return False
         return platform_name(event) in {"qq", "telegram"}
 
-    @filter.on_llm_request(priority=-2_147_483_647)
-    async def prepare_media(self, event: AstrMessageEvent, request):
-        try:
-            await self.organizer.flow.prepare(event, request, TextPart)
-        except (ChannelError, OSError, ValueError):
-            logger.exception("[%s] group flow injection stopped", PLUGIN)
-        await self.organizer.prepare_request(event, request)
-        hint = await self.awareness.request_hint(event)
-        if hint is not None:
-            append_temporary_text(request, hint, self.awareness.HINT_PREFIX, TextPart)
+    @filter.on_waiting_llm_request()
+    async def log_waiting_request(self, event: AstrMessageEvent):
+        self.capabilities.request_trace.waiting(event)
+        self.organizer.diagnostics.emit("llm.waiting_for_session", event)
 
-    @filter.on_agent_done(priority=-2_147_483_647)
+    @filter.on_llm_response()
+    async def log_llm_response(self, event: AstrMessageEvent, response):
+        self.organizer.diagnostics.emit(
+            "llm.response",
+            event,
+            role=field(response, "role"),
+            completion_chars=len(field(response, "completion_text", "") or ""),
+            tool_calls=field(response, "tools_call_name", []),
+        )
+
+    @filter.on_llm_request(priority=LAST_LLM_PRIORITY)
+    async def prepare_media(self, event: AstrMessageEvent, request):
+        async with self.organizer.diagnostics.span("llm.request_hook", event):
+            try:
+                async with self.organizer.diagnostics.span("flow.prepare", event):
+                    await self.organizer.flow.prepare(event, request, TextPart)
+            except (ChannelError, OSError, ValueError):
+                logger.exception("[%s] group flow injection stopped", PLUGIN)
+            async with self.organizer.diagnostics.span("media.prepare", event):
+                await self.organizer.prepare_request(event, request)
+            async with self.organizer.diagnostics.span("awareness.hint", event):
+                hint = await self.awareness.request_hint(event)
+            if hint is not None:
+                append_temporary_text(
+                    request, hint, self.awareness.HINT_PREFIX, TextPart
+                )
+            self.organizer.diagnostics.emit(
+                "llm.request_ready",
+                event,
+                history_messages=len(field(request, "contexts", []) or []),
+                tools=len(field(field(request, "func_tool"), "tools", []) or []),
+            )
+
+    @filter.on_agent_done(priority=LAST_LLM_PRIORITY)
     async def remove_persistent_pixels(
         self, event: AstrMessageEvent, run_context, response
     ):
+        self.organizer.diagnostics.emit(
+            "agent.done",
+            event,
+            response_role=field(response, "role"),
+            messages=len(field(run_context, "messages", []) or []),
+        )
         if self.participates(event):
             # The state-transition guard covers error and aborted completion.
             await self.organizer.policy.finish_context(event, run_context)
             self.organizer.flow.finish(event, run_context, response)
         await self.capabilities.finish_context(run_context)
 
-    @filter.on_using_llm_tool(priority=-2_147_483_647)
+    @filter.on_using_llm_tool(priority=LAST_LLM_PRIORITY)
     async def reserve_background_images(self, event: AstrMessageEvent, tool, tool_args):
         if self.organizer.enabled_event(event):
             self.organizer.integration.prepare_background_call(event, tool, tool_args)

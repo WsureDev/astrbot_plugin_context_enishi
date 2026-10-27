@@ -7,6 +7,7 @@ import uuid
 import weakref
 
 from ..channels.native import field
+from ..observability import Diagnostics
 from ..storage.files import run_io
 from .artifacts import ArtifactStore
 from .catalog import digest, skill_entries, tool_entries
@@ -15,6 +16,7 @@ from .integration import CapabilityIntegration
 from .policy import META_NAMES, CapabilityPolicy, lazy_conflict, participates
 from .preferences import CapabilityPreferences
 from .registry import RegistryObserver
+from .request_trace import RequestTrace
 from .skills import SkillIntegration
 from .state import Session, StateStore
 from .tools import make_tools
@@ -28,6 +30,7 @@ except ImportError:
 class CapabilityService:
     def __init__(self, context, config):
         self.context, self.config = context, config
+        self.diagnostics = Diagnostics(config)
         self.store = self.artifacts = None
         self.entries = {}
         self.scope_skills = {}
@@ -48,6 +51,7 @@ class CapabilityService:
         self.skills = SkillIntegration(self)
         self.integration = CapabilityIntegration(self)
         self.preferences = CapabilityPreferences(self)
+        self.request_trace = RequestTrace(self)
 
     @property
     def policy(self):
@@ -90,6 +94,7 @@ class CapabilityService:
         try:
             self.observer.install()
             self.skills.install()
+            self.request_trace.install()
             self.integration.install(runner_class, executor_class)
             if self.management_active:
                 for client in self.observer.clients().values():
@@ -112,7 +117,11 @@ class CapabilityService:
         message = f"{operation}: {type(exc).__name__}: {exc}"
         self.errors.append(message)
         self.errors[:] = self.errors[-20:]
-        logger.warning("Enishi capabilities: %s", message)
+        logger.warning(
+            "Enishi capabilities: %s",
+            message,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
 
     def spawn(self, coroutine):
         task = asyncio.create_task(coroutine)
@@ -175,8 +184,9 @@ class CapabilityService:
             await self.refresh()
 
     async def refresh(self):
-        async with self.catalog_lock:
-            return await self._refresh()
+        async with self.diagnostics.lock(self.catalog_lock, "catalog.lock"):
+            async with self.diagnostics.span("catalog.refresh"):
+                return await self._refresh()
 
     async def _refresh(self):
         generation = self.catalog_generation
@@ -185,16 +195,18 @@ class CapabilityService:
         try:
             from astrbot.core.skills.skill_manager import SkillManager
 
-            skill_manager = await asyncio.to_thread(SkillManager)
-            skills = await asyncio.to_thread(
-                skill_manager.list_skills,
-                active_only=True,
-                runtime="local",
-                show_sandbox_path=False,
-            )
-            sandbox = await asyncio.to_thread(
-                skill_manager.list_skills, active_only=True, runtime="sandbox"
-            )
+            async with self.diagnostics.span("catalog.skills.local"):
+                skill_manager = await asyncio.to_thread(SkillManager)
+                skills = await asyncio.to_thread(
+                    skill_manager.list_skills,
+                    active_only=True,
+                    runtime="local",
+                    show_sandbox_path=False,
+                )
+            async with self.diagnostics.span("catalog.skills.sandbox_cache"):
+                sandbox = await asyncio.to_thread(
+                    skill_manager.list_skills, active_only=True, runtime="sandbox"
+                )
             entries.update(skill_entries(skills, local_metadata=True))
             entries.update(
                 skill_entries(
@@ -255,9 +267,10 @@ class CapabilityService:
     async def persist(self):
         if self.store is None:
             return
-        async with self.save_lock:
-            snapshot = copy.deepcopy(self.store.snapshot())
-            await self.io(self.store.save, snapshot)
+        async with self.diagnostics.lock(self.save_lock, "capabilities.save_lock"):
+            async with self.diagnostics.span("capabilities.persist"):
+                snapshot = copy.deepcopy(self.store.snapshot())
+                await self.io(self.store.save, snapshot)
 
     async def finish_context(self, context):
         run = getattr(context, "_enishi_capabilities", None)
@@ -404,6 +417,7 @@ class CapabilityService:
 
     async def close(self):
         self.closed = True
+        self.request_trace.close()
         self.skills.close()
         self.integration.close()
         await self.observer.close()

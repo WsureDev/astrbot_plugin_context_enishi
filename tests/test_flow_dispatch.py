@@ -71,7 +71,9 @@ async def test_native_pipeline_records_unmentioned_messages_then_injects_them(
     )(event_type.GROUP_MESSAGE)
     service = flow_service(tmp_path)
     plugin = object.__new__(plugin_class)
-    plugin.organizer = SimpleNamespace(flow=service.flow)
+    plugin.organizer = SimpleNamespace(
+        flow=service.flow, diagnostics=service.flow.diagnostics
+    )
     handler = SimpleNamespace(
         event_filters=[event_filter],
         handler_module_path="enishi.main",

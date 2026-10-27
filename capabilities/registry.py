@@ -5,10 +5,16 @@ import inspect
 import weakref
 from contextvars import ContextVar
 
+from anyio import BrokenResourceError, ClosedResourceError, EndOfStream
+
 from .catalog import digest, unwrap
 from .patches import Patches
 
 MCP_OWNER = ContextVar("enishi_mcp_owner", default=None)
+LOCAL_CATALOG_CHECK_SECONDS = 60
+NOTIFICATION_COALESCE_SECONDS = 0.05
+NO_SESSION_ATTRIBUTE = object()
+DISCONNECTED_ERRORS = (ClosedResourceError, BrokenResourceError, EndOfStream)
 
 
 class RegistryObserver:
@@ -27,6 +33,7 @@ class RegistryObserver:
         self.activation_pending = 0
         self.activation_settled = asyncio.Event()
         self.activation_settled.set()
+        self.closed_sessions = weakref.WeakKeyDictionary()
 
     def install(
         self, manager_class=None, context_class=None, client_class=None, sdk_class=None
@@ -206,6 +213,22 @@ class RegistryObserver:
             or not self.service.management_active
         ):
             return
+        session = getattr(client, "session", NO_SESSION_ATTRIBUTE)
+        if session is None:
+            return
+        if client in self.closed_sessions:
+            if self.closed_sessions[client] is session:
+                return
+            del self.closed_sessions[client]
+        connection = getattr(client, "_connection_task", None)
+        if connection is not None and connection.done():
+            self.closed_sessions[client] = session
+            self.service.diagnostics.emit(
+                "mcp.connection_closed",
+                level="warning",
+                server=self.client_name(client),
+            )
+            return
         if client in self.refreshing:
             self.pending_refresh.add(client)
             return
@@ -215,12 +238,36 @@ class RegistryObserver:
             try:
                 while self.patches.active and self.service.management_active:
                     self.pending_refresh.discard(client)
-                    await client.list_tools_and_save()
+                    previous = list(getattr(client, "tools", []))
+                    previous_session = getattr(client, "session", NO_SESSION_ATTRIBUTE)
+                    try:
+                        async with self.service.diagnostics.span(
+                            "mcp.catalog_pull", server=self.client_name(client)
+                        ):
+                            async with asyncio.timeout(
+                                self.service.policy.mcp_refresh_timeout_seconds
+                            ):
+                                await client.list_tools_and_save()
+                    except BaseException:
+                        if (
+                            getattr(client, "session", NO_SESSION_ATTRIBUTE)
+                            is previous_session
+                        ):
+                            client.tools = previous
+                        raise
                     if client not in self.pending_refresh:
                         break
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(NOTIFICATION_COALESCE_SECONDS)
+            except DISCONNECTED_ERRORS as exc:
+                if getattr(client, "session", NO_SESSION_ATTRIBUTE) is session:
+                    self.closed_sessions[client] = session
+                self.service.failure(
+                    "MCP catalog refresh [" + self.client_name(client) + "]", exc
+                )
             except Exception as exc:
-                self.service.failure("MCP catalog refresh", exc)
+                self.service.failure(
+                    "MCP catalog refresh [" + self.client_name(client) + "]", exc
+                )
             finally:
                 self.refreshing.discard(client)
                 self.pending_refresh.discard(client)
@@ -228,6 +275,14 @@ class RegistryObserver:
         task = self.service.spawn(refresh())
         self.pull_tasks.add(task)
         task.add_done_callback(self.pull_tasks.discard)
+
+    def client_name(self, client):
+        return next(
+            (name for name, value in self.clients().items() if value is client),
+            getattr(client, "name", None)
+            or getattr(client, "_server_name", None)
+            or type(client).__name__,
+        )
 
     async def reconcile(self, client):
         if not self.service.management_active:
@@ -294,7 +349,7 @@ class RegistryObserver:
     async def _poll(self):
         while self.patches.active:
             seconds = self.service.policy.mcp_poll_seconds
-            await asyncio.sleep(seconds or 60)
+            await asyncio.sleep(seconds or LOCAL_CATALOG_CHECK_SECONDS)
             if not self.service.management_active:
                 continue
             self.bind_sessions()
@@ -313,3 +368,4 @@ class RegistryObserver:
             self.poll_task.cancel()
             await asyncio.gather(self.poll_task, return_exceptions=True)
         self.sessions.clear()
+        self.closed_sessions.clear()
