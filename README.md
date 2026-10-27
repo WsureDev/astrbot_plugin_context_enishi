@@ -74,7 +74,7 @@ v0.4.2 起，已有历史中带工具图片来源标记的旧转述，以及能�
 
 | 工具 | 用途 |
 | --- | --- |
-| `describe_channel_image(image_id, question)` | 从来源读取图片，由选定模型或备用模型转述，主模型只接收文字 |
+| `describe_channel_image(image_ids, question)` | 接收 1–6 个原生图片 ID；多图编号拼接后由选定模型或备用模型联合转述，主模型只接收文字 |
 | `fetch_channel_image(image_id)` | 从来源获取本轮临时文件路径、尺寸、MIME 和字节数 |
 | `get_group_participants(order, limit, hours, start_time, end_time)` | 最近发言顺序或指定时段观察到的发言次数排行，带数据覆盖说明 |
 | `get_chat_environment(limit)` | 群名、当前发言者、引用对象和少量最近活跃人员 |
@@ -83,7 +83,23 @@ v0.4.2 起，已有历史中带工具图片来源标记的旧转述，以及能�
 | `get_channel_message(message_id)` | QQ 从 NapCat 查询；TG 读取当前载荷中的当前／引用消息 |
 | `get_channel_user_history(user_id, limit, days, before_id)` | 原有历史发言功能：QQ 分页查询 NapCat；TG 查询已有本地群历史并明确覆盖范围 |
 
-例子：引用一张旧图后，模型调用 `describe_channel_image` 获取文字说明。用于生图时，先调用 `fetch_channel_image`，再把返回的本轮路径传给 `generate_image(reference_images=[path], use_context_images=false)`。
+图片转述的 `image_ids` 必须是数组，单图也传 `["完整图片ID"]`。建议把有关联的图片批量总结，例如同一人连续发送的多张图、同一事件的照片或连续截图；每组最多 6 张，更多图片分组调用。
+
+```json
+{
+  "image_ids": [
+    "qq://Haqi8mi/332993267/image/A.jpg?m=42&i=0",
+    "qq://Haqi8mi/332993267/image/B.jpg?m=42&i=1"
+  ],
+  "question": "按图片序号分别解读，再总结这两张截图的关联。"
+}
+```
+
+多图按输入顺序从左到右、从上到下排成两列，最多三行。每格上方有独立的 IMAGE 1–6 编号带，图片之间有 32 像素深色间隔带。保持比例、不裁剪，单图长边超过 2048 像素时按比例缩小；EXIF 方向会校正，透明部分以白色衬底。单张图片直接交给转述模型。返回的 `image_ids` 保持完整，`images` 按相同顺序给出原图元信息和序号，`collage` 给出拼图尺寸及图像位置。任一图片读取失败会指出序号并终止整组，不悄悄跳过图片。
+
+拼图只在内存中生成，主模型不接收拼图像素，也不建立原图或拼图缓存；仍仅缓存转述文字。多图缓存区分图片内容、顺序、问题和模型。同组再次请求仍会从来源读取每张图，来源失效时不会用旧转述冒充当前结果。任务结束后移除 `description`，保留全部原始 ID、序号和调用配对。
+
+用于生图时，先调用 `fetch_channel_image`，再把返回的本轮路径传给 `generate_image(reference_images=[path], use_context_images=false)`。
 
 开启图片管理时，通用生图工具的隐式上下文图片缓存入口会提示改用显式参考图，避免旧缓存覆盖新图。
 

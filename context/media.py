@@ -8,7 +8,7 @@ from typing import Any
 from weakref import WeakValueDictionary
 
 from ..channels.media import MAX_CAPTION_BYTES, ChannelError, MediaSources
-from ..channels.native import SourceImage, field
+from ..channels.native import ImageRef, SourceImage, field
 from ..settings import (
     MODE_CURRENT_TURN,
     MODE_DISABLED,
@@ -22,6 +22,7 @@ from .captions import (
     CaptionHistory,
     is_tool_image_message,
 )
+from .image_batch import MAX_BATCH_IMAGES, compose_images
 from .storage import CaptionCache
 
 CAPTION_SYSTEM = (
@@ -142,12 +143,52 @@ class MediaPolicy:
                 }
             raise ChannelError("图片转述模型及备用模型均失败：" + "; ".join(failures))
 
-    async def describe_image(self, event: Any, image_id: str, question: str) -> dict:
-        data, metadata = await self.channels.read_image(
-            event, image_id, max_bytes=MAX_CAPTION_BYTES - 1
-        )
-        result = await self.describe_bytes(event, data, question)
-        return {"image_id": image_id, **result, **metadata}
+    async def describe_images(
+        self, event: Any, image_ids: list[str], question: str
+    ) -> dict:
+        if (
+            not isinstance(image_ids, list)
+            or not 1 <= len(image_ids) <= MAX_BATCH_IMAGES
+        ):
+            raise ChannelError(
+                "image_ids 必须是包含 1–6 个图片 ID 的数组；超过 6 张请分组调用"
+            )
+        if not isinstance(question, str):
+            raise ChannelError("question 必须是文本")
+        for image_id in image_ids:
+            ImageRef.parse(image_id, event)
+        sources, images = [], []
+        for index, image_id in enumerate(image_ids, 1):
+            try:
+                data, metadata = await self.channels.read_image(
+                    event, image_id, max_bytes=MAX_CAPTION_BYTES - 1
+                )
+            except (ChannelError, ValueError) as exc:
+                raise ChannelError(
+                    f"第 {index} 张图片（{image_id}）读取失败：{exc}"
+                ) from exc
+            sources.append(data)
+            images.append({"index": index, **metadata})
+        collage = None
+        data = sources[0]
+        prompt = question
+        if len(sources) > 1:
+            data, collage = await asyncio.to_thread(compose_images, sources)
+            prompt = (
+                f"这是一组 {len(sources)} 张独立图片拼成的图，按从左到右、从上到下排列。"
+                "每格上方的 IMAGE 1、IMAGE 2 等是原始图片序号，深色间隔带分隔不同图片。"
+                "请按图片序号分别识别内容和可见文字，再结合问题总结它们的关联；"
+                "不要把不同图片中的人物、文字或事件混为一张，也不要将间隔带和序号当作原图内容。"
+                "关联不明确时请说明，不要臆测。\n用户问题：" + question
+            )
+        result = await self.describe_bytes(event, data, prompt)
+        return {
+            "image_ids": list(image_ids),
+            "image_count": len(image_ids),
+            "images": images,
+            "collage": collage,
+            **result,
+        }
 
     async def prepare_request(self, event: Any, request: Any):
         state = self.state(event, request)
@@ -167,7 +208,8 @@ class MediaPolicy:
             request.image_urls = []
         instructions = (
             "\n[Channel media policy] Images are addressed by platform-native IDs. "
-            "Use describe_channel_image to inspect an image through the description model. "
+            "Use describe_channel_image(image_ids=[...], question=...) to inspect 1–6 images through the description model. "
+            "Batch related images, such as multiple images sent by the same person, for a joint numbered analysis. "
             "Use fetch_channel_image to obtain a local file for a downstream tool; pass its path explicitly. "
             "File retrieval does not place pixels in your context. "
             "File paths are temporary for this turn; fetch again by native image ID in later turns. "

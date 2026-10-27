@@ -312,7 +312,9 @@ async def test_caption_cleanup_keeps_original_image_marker(service):
 
 
 async def test_history_projection_does_not_change_caption_cache_or_original_id(service):
-    first = await service.policy.describe_image(service.event, "native_current", "内容")
+    first = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
+    )
     run = runner(service.event, request(), [dict(role="user", content="inspect")])
     await service.policy.before_step(run)
     exchange = describe_exchange()
@@ -322,11 +324,11 @@ async def test_history_projection_does_not_change_caption_cache_or_original_id(s
     assert json.loads(exchange[1]["content"])["description"] == first["description"]
     await service.policy.finish(run)
     saved = json.loads(exchange[1]["content"])
-    assert saved["image_id"] == first["image_id"] == "native_current"
+    assert saved["image_ids"] == first["image_ids"] == ["native_current"]
     assert "description" not in saved
-    second = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    second = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert second["cached"] and second["description"] == first["description"]
-    assert second["image_id"] == first["image_id"]
+    assert second["image_ids"] == first["image_ids"]
     service.context.llm_generate.assert_awaited_once()

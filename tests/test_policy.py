@@ -31,19 +31,19 @@ async def test_native_reply_is_retrieved_without_prior_reception(service):
 
 
 async def test_descriptions_are_cached_per_content_question_provider(service):
-    first = await service.policy.describe_image(
-        service.event, "native_unseen_reply", "看到了什么？"
+    first = await service.policy.describe_images(
+        service.event, ["native_unseen_reply"], "看到了什么？"
     )
-    second = await service.policy.describe_image(
-        service.event, "native_unseen_reply", "看到了什么？"
+    second = await service.policy.describe_images(
+        service.event, ["native_unseen_reply"], "看到了什么？"
     )
     assert not first["cached"] and second["cached"]
-    await service.policy.describe_image(
-        service.event, "native_unseen_reply", "文字是什么？"
+    await service.policy.describe_images(
+        service.event, ["native_unseen_reply"], "文字是什么？"
     )
     service.config["channel_settings"][0]["caption_provider_id"] = "another-vision"
-    await service.policy.describe_image(
-        service.event, "native_unseen_reply", "文字是什么？"
+    await service.policy.describe_images(
+        service.event, ["native_unseen_reply"], "文字是什么？"
     )
     assert service.context.llm_generate.await_count == 3
     assert service.event.client.get_file.await_count == 4
@@ -53,7 +53,9 @@ async def test_descriptions_are_cached_per_content_question_provider(service):
 async def test_concurrent_image_and_caption_requests_do_not_duplicate(service):
     results = await asyncio.gather(
         *(
-            service.policy.describe_image(service.event, "native_unseen_reply", "内容")
+            service.policy.describe_images(
+                service.event, ["native_unseen_reply"], "内容"
+            )
             for _ in range(5)
         )
     )
@@ -161,7 +163,7 @@ async def test_disabled_has_no_image_changes_or_native_api_calls(service):
 async def test_missing_caption_model_does_not_fall_back_to_main_pixels(service):
     service.config["channel_settings"][0]["caption_provider_id"] = ""
     with pytest.raises(ChannelError, match="图片转述模型"):
-        await service.policy.describe_image(service.event, "native_current", "内容")
+        await service.policy.describe_images(service.event, ["native_current"], "内容")
     service.context.llm_generate.assert_not_called()
 
 

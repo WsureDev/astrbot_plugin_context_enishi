@@ -87,16 +87,16 @@ async def test_primary_failure_uses_ordered_fallback_and_caches_success(service)
         SimpleNamespace(completion_text=" "),
         SimpleNamespace(completion_text="备用模型转述"),
     ]
-    result = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    result = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert result["provider_id"] == "backup2" and not result["cached"]
     assert [
         call.kwargs["chat_provider_id"]
         for call in service.context.llm_generate.call_args_list
     ] == ["vision", "backup1", "backup2"]
-    result = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    result = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert result["cached"] and result["provider_id"] == "backup2"
     assert service.context.llm_generate.await_count == 3
@@ -112,8 +112,8 @@ async def test_text_only_provider_is_skipped_without_image_call(service):
             "modalities": ["text"] if value == "vision" else ["image", "text"]
         }
     )
-    result = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    result = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert result["provider_id"] == "visual-backup"
     assert service.context.llm_generate.await_count == 1
@@ -128,8 +128,8 @@ async def test_provider_lookup_failure_still_uses_fallback(service):
         return SimpleNamespace(provider_config={"modalities": ["image"]})
 
     service.context.get_provider_by_id = getter
-    result = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    result = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert result["provider_id"] == "backup"
     assert service.context.llm_generate.await_count == 1
@@ -140,8 +140,8 @@ async def test_empty_primary_uses_framework_image_caption_model(service):
     service.context.get_config = lambda **kwargs: {
         "provider_settings": {"default_image_caption_provider_id": "framework-vision"}
     }
-    result = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    result = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert result["provider_id"] == "framework-vision"
 
@@ -150,7 +150,7 @@ async def test_all_models_failed_does_not_cache_error(service):
     service.config["channel_settings"][0]["caption_fallback_provider_ids"] = ["backup"]
     service.context.llm_generate.side_effect = RuntimeError("private backend error")
     with pytest.raises(ChannelError, match="备用模型均失败"):
-        await service.policy.describe_image(service.event, "native_current", "内容")
+        await service.policy.describe_images(service.event, ["native_current"], "内容")
     assert service.cache.db.execute("SELECT count(*) FROM captions").fetchone()[0] == 0
     assert service.context.llm_generate.await_count == 2
 
@@ -158,12 +158,12 @@ async def test_all_models_failed_does_not_cache_error(service):
 async def test_caption_cache_does_not_expire_by_default_and_saves_no_image_file(
     service, monkeypatch
 ):
-    await service.policy.describe_image(service.event, "native_current", "内容")
+    await service.policy.describe_images(service.event, ["native_current"], "内容")
     monkeypatch.setattr(
         "astrbot_plugin_context_enishi.context.storage.time.time", lambda: 9_999_999_999
     )
-    result = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    result = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert result["cached"] and service.context.llm_generate.await_count == 1
     assert not list(service.tmp.rglob("*.png"))
@@ -174,21 +174,21 @@ async def test_caption_cache_does_not_expire_by_default_and_saves_no_image_file(
 
 async def test_explicit_caption_expiration_works(service, monkeypatch):
     service.config["channel_settings"][0]["caption_cache_ttl_hours"] = 1
-    await service.policy.describe_image(service.event, "native_current", "内容")
+    await service.policy.describe_images(service.event, ["native_current"], "内容")
     monkeypatch.setattr(
         "astrbot_plugin_context_enishi.context.storage.time.time", lambda: 9_999_999_999
     )
-    result = await service.policy.describe_image(
-        service.event, "native_current", "内容"
+    result = await service.policy.describe_images(
+        service.event, ["native_current"], "内容"
     )
     assert not result["cached"] and service.context.llm_generate.await_count == 2
 
 
 async def test_source_expired_is_not_resurrected_from_cached_description(service):
-    await service.policy.describe_image(service.event, "native_current", "内容")
+    await service.policy.describe_images(service.event, ["native_current"], "内容")
     service.event.client.get_file.side_effect = RuntimeError("expired")
     with pytest.raises(ChannelError, match="get_file failed"):
-        await service.policy.describe_image(service.event, "native_current", "内容")
+        await service.policy.describe_images(service.event, ["native_current"], "内容")
     assert service.context.llm_generate.await_count == 1
 
 
@@ -204,7 +204,7 @@ async def test_cached_transfer_file_is_not_reused_if_source_expired(service):
 async def test_large_source_is_rejected_before_download_or_model_call(service, size):
     service.media.file_size = size
     with pytest.raises(ChannelError, match="16 MB"):
-        await service.policy.describe_image(service.event, "native_current", "内容")
+        await service.policy.describe_images(service.event, ["native_current"], "内容")
     service.media.download_as_bytearray.assert_not_called()
     service.context.llm_generate.assert_not_called()
 

@@ -29,11 +29,15 @@ def _expired_result(text):
         payload, end = json.JSONDecoder().raw_decode(text, start)
     except ValueError:
         return text
-    if (
-        not isinstance(payload, dict)
-        or not isinstance(payload.get("image_id"), str)
-        or not isinstance(payload.get("description"), str)
-    ):
+    if not isinstance(payload, dict) or not isinstance(payload.get("description"), str):
+        return text
+    image_ids = payload.get("image_ids")
+    has_image_ids = (
+        isinstance(image_ids, list)
+        and bool(image_ids)
+        and all(isinstance(image_id, str) for image_id in image_ids)
+    )
+    if not has_image_ids and not isinstance(payload.get("image_id"), str):
         return text
     del payload["description"]
     return text[:start] + json.dumps(payload, ensure_ascii=False) + text[end:]
