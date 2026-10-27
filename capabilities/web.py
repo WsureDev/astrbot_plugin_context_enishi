@@ -25,7 +25,7 @@ class CapabilityAPI:
     async def body(self):
         from astrbot.api.web import request
 
-        value = await request.get_json()
+        value = await request.json()
         if not isinstance(value, dict):
             raise ValueError("请求必须是 JSON 对象")
         return value
