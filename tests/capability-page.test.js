@@ -191,8 +191,8 @@ function fixture() {
   }
 }
 
-async function pageWith(data = fixture(), width = 1360, dark = false) {
-  const page = await browser.newPage({ viewport: { width, height: 960 } })
+async function pageWith(data = fixture(), width = 1360, dark = false, height = 960) {
+  const page = await browser.newPage({ viewport: { width, height } })
   const errors = []
   page.on("pageerror", (error) => {
     errors.push(error.message)
@@ -258,7 +258,17 @@ async function pageWith(data = fixture(), width = 1360, dark = false) {
       await document.fonts.load('14px "Noto Sans CJK SC"')
     })
   }
-  await page.locator("#result-count").getByText("共 39 项", { exact: false }).waitFor()
+  const total = data.groups
+    .flatMap((group) => {
+      return group.entries
+    })
+    .filter((entry) => {
+      return entry.kind === "tool"
+    }).length
+  await page
+    .locator("#result-count")
+    .getByText("共 " + total + " 项", { exact: false })
+    .waitFor()
   expect(errors).toEqual([])
   return page
 }
@@ -467,6 +477,66 @@ test("light, dark and mobile layouts remain readable without overflow", async ()
           fullPage: true
         })
       }
+    } finally {
+      await page.close()
+    }
+  }
+})
+
+test("long source list scrolls above runtime navigation and the last source stays clickable", async () => {
+  const data = fixture()
+  for (let index = 0; index < 40; index++) {
+    data.groups.push({
+      id: "mcp:extra-" + index,
+      name: "extra-" + index,
+      source_name: "Extra source " + index,
+      mode: "folded",
+      available: true,
+      entries: [
+        {
+          id: "mcp:extra-" + index + "/tool",
+          name: "extra_tool_" + index,
+          kind: "tool",
+          description: "Additional tool",
+          override: "inherit"
+        }
+      ]
+    })
+  }
+  for (const height of [600, 480]) {
+    const page = await pageWith(data, 1100, false, height)
+    try {
+      const last = page.locator('.source-item[title="mcp:extra-39"]')
+      await last.scrollIntoViewIfNeeded()
+      await last.click({ timeout: 1500 })
+      expect(await page.locator("#page-title").textContent()).toBe("Extra source 39")
+      const bounds = await page.evaluate(() => {
+        const item = document.querySelector('.source-item[title="mcp:extra-39"]')
+        const last = item.getBoundingClientRect()
+        const bottom = document.querySelector(".sidebar-bottom").getBoundingClientRect()
+        const sources = document.getElementById("sources")
+        const hit = document.elementFromPoint(last.x + last.width / 2, last.y + last.height / 2)
+        return {
+          lastBottom: last.bottom,
+          bottomTop: bottom.top,
+          sourceBottom: sources.getBoundingClientRect().bottom,
+          clickable: item.contains(hit),
+          scrolled: sources.scrollTop > 0
+        }
+      })
+      expect(bounds.lastBottom).toBeLessThanOrEqual(bounds.bottomTop)
+      expect(bounds.sourceBottom).toBeLessThanOrEqual(bounds.bottomTop)
+      expect(bounds.clickable).toBe(true)
+      expect(bounds.scrolled).toBe(true)
+      await page.locator('.sidebar-bottom [data-view="sessions"]').click({ timeout: 1500 })
+      expect(await page.locator("#runtime-view h1").textContent()).toBe("会话状态")
+      await page.locator('.sidebar-bottom [data-view="diagnostics"]').click({ timeout: 1500 })
+      expect(await page.locator("#runtime-view h1").textContent()).toBe("诊断")
+      const navigationBottom = await page.locator(".sidebar-bottom").evaluate((element) => {
+        return element.getBoundingClientRect().bottom
+      })
+      expect(navigationBottom).toBeLessThanOrEqual(height)
+      expect(navigationBottom).toBeGreaterThan(height - 40)
     } finally {
       await page.close()
     }

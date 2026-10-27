@@ -3,6 +3,8 @@ import { byId, node, button, badge, segmented } from "./components.js"
 
 export function renderSources(onSource) {
   const container = byId("sources")
+  const scrollTop = container.scrollTop
+  const focusedId = document.activeElement?.closest(".source-item")?.dataset.id
   container.replaceChildren()
   byId("mobile-source").replaceChildren(new Option("全部来源", ""))
   const categories = new Map()
@@ -32,6 +34,7 @@ export function renderSources(onSource) {
         },
         "source-item"
       )
+      item.dataset.id = group.id
       item.title = group.id
       item.classList.toggle("active", state.source === group.id)
       item.classList.toggle("unavailable", !group.available)
@@ -46,6 +49,12 @@ export function renderSources(onSource) {
     }
   }
   byId("mobile-source").value = state.source
+  container.scrollTop = scrollTop
+  for (const item of container.querySelectorAll(".source-item")) {
+    if (item.dataset.id === focusedId) {
+      item.focus({ preventScroll: true })
+    }
+  }
 }
 
 export function renderCatalog(actions) {

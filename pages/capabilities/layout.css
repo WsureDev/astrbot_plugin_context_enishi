@@ -17,7 +17,10 @@
   display: flex;
   flex-direction: column;
   padding: 28px 16px 16px;
-  overflow: auto;
+  overflow: hidden;
+}
+.sidebar > :not(#sources) {
+  flex-shrink: 0;
 }
 .brand {
   display: flex;
@@ -118,8 +121,14 @@
   color: #b5bfd1;
 }
 #sources {
-  flex: 1;
-  min-height: 70px;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #58647e transparent;
+  margin-bottom: 16px;
 }
 .source-category {
   color: #8290ad;
@@ -177,7 +186,7 @@
 .sidebar-bottom {
   border-top: 1px solid #ffffff10;
   padding-top: 16px;
-  margin-top: 24px;
+  margin-top: auto;
 }
 .sidebar-foot {
   font-size: 10px;
@@ -191,6 +200,34 @@
   border-radius: 50%;
   background: #91c8b8;
   margin-right: 5px;
+}
+@media (max-height: 660px) {
+  .sidebar {
+    padding-top: 16px;
+    padding-bottom: 12px;
+  }
+  .brand {
+    margin-bottom: 18px;
+  }
+  .sidebar-caption span {
+    display: none;
+  }
+  .sidebar-caption {
+    margin-bottom: 8px;
+  }
+  .sidebar-heading {
+    padding-top: 12px;
+    padding-bottom: 8px;
+  }
+  .sidebar-foot {
+    display: none;
+  }
+  #sources {
+    margin-bottom: 10px;
+  }
+  .sidebar-bottom {
+    padding-top: 10px;
+  }
 }
 .main-shell {
   min-width: 0;
