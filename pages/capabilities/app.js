@@ -1,287 +1,370 @@
-"use strict"
+import {
+  state,
+  adopt,
+  edit,
+  draftCounts,
+  filteredEntries,
+  payload,
+  resolveConflicts
+} from "./model.js"
+import { byId, node, button, icons, toast, error } from "./components.js"
+import { renderSources, renderCatalog } from "./catalog.js"
+import {
+  openSettings,
+  applySettings,
+  openDetail,
+  openGroup,
+  renderReview,
+  renderRuntime
+} from "./panels.js"
 
 const bridge = window.AstrBotPluginPage
-let snapshot = null
 let generation = 0
-let dirtySettings = false
-const groupDrafts = new Map()
-const byId = (id) => {
-  return document.getElementById(id)
-}
-
-function node(tag, text, className) {
-  const element = document.createElement(tag)
-  if (text !== undefined) {
-    element.textContent = text
-  }
-  if (className) {
-    element.className = className
-  }
-  return element
-}
-
-function select(value, inherited) {
-  const element = node("select")
-  const choices = [
-    ["folded", "收纳"],
-    ["primary", "一级常驻"]
-  ]
-  if (inherited) {
-    choices.unshift(["inherit", "跟随组"])
-  }
-  for (const [key, label] of choices) {
-    const option = node("option", label)
-    option.value = key
-    element.append(option)
-  }
-  element.value = value
-  return element
-}
-
-function error(message) {
-  byId("error").textContent = message
-  byId("error").hidden = !message
-}
+let refreshPending = false
+let toastOnSave = false
 
 async function post(endpoint, body) {
-  const result = await bridge.apiPost("capabilities/" + endpoint, body)
-  if (result.error) {
-    throw new Error(result.error)
+  const response = await bridge.apiPost("capabilities/" + endpoint, body)
+  if (response.error) {
+    throw new Error(response.error)
   }
-  if (endpoint === "settings") {
-    dirtySettings = false
-  }
-  if (endpoint === "group") {
-    groupDrafts.delete(body.group)
-  }
-  await refresh()
+  return response
 }
 
-function renderGroups() {
-  const container = byId("groups")
-  const expanded = new Set(
-    [...container.querySelectorAll("details[open]")].map((item) => {
-      return item.dataset.id
-    })
-  )
-  container.replaceChildren()
-  const query = byId("search").value.toLocaleLowerCase()
-  let shown = 0
-  for (const group of snapshot.groups) {
-    const entries = group.entries.filter((entry) => {
-      return (entry.name + " " + entry.description + " " + group.id + " " + (group.name ?? ""))
-        .toLocaleLowerCase()
-        .includes(query)
-    })
-    if (
-      query &&
-      entries.length === 0 &&
-      !(group.id + " " + (group.name ?? "")).toLocaleLowerCase().includes(query)
-    ) {
-      continue
-    }
-    shown += 1
-    const card = node("details", undefined, "group")
-    card.dataset.id = group.id
-    card.open = expanded.has(group.id)
-    const summary = node("summary")
-    summary.append(
-      node("strong", group.name ?? group.id),
-      node("span", group.entries.length + " 项", "badge")
-    )
-    if (!group.available) {
-      summary.append(node("span", "来源暂不可用，策略保留", "badge"))
-    }
-    card.append(summary)
-    card.append(node("p", group.id, "source"))
-    const controls = node("div", undefined, "controls")
-    const draft = groupDrafts.get(group.id)
-    const nameLabel = node("label", "组显示名")
-    const name = node("input")
-    name.value = draft?.name ?? group.name ?? group.id
-    nameLabel.append(name)
-    const modeLabel = node("label", "整组策略")
-    const mode = select(draft?.mode ?? group.mode, false)
-    modeLabel.append(mode)
-    const idleLabel = node("label", "闲置轮数，留空跟随默认")
-    const idle = node("input")
-    idle.type = "number"
-    idle.min = "1"
-    idle.value = draft?.idle ?? group.idle_rounds ?? ""
-    idleLabel.append(idle)
-    const save = node("button", "保存组策略")
-    save.type = "button"
-    save.addEventListener("click", async () => {
-      save.disabled = true
-      try {
-        let rounds = null
-        if (idle.value) {
-          rounds = Number(idle.value)
-        }
-        await post("group", {
-          group: group.id,
-          mode: mode.value,
-          idle_rounds: rounds,
-          name: name.value
-        })
-      } catch (cause) {
-        error(cause.message)
-        save.disabled = false
+function source(id) {
+  state.source = id
+  state.page = 0
+  render()
+}
+
+function view(name) {
+  state.view = name
+  state.source = ""
+  state.page = 0
+  state.selected.clear()
+  render()
+}
+
+function renderSaveBar() {
+  byId("catalog-view").inert = state.saving
+  byId("open-settings").disabled = state.saving
+  const counts = draftCounts()
+  let text = "所有修改已保存"
+  if (counts.total) {
+    text = "已修改 " + counts.total + " 项"
+  }
+  if (state.saving) {
+    text = "正在保存…"
+  }
+  byId("dirty-count").textContent = text
+  byId("draft-summary").textContent =
+    counts.groups + " 个组 · " + counts.tools + " 个工具 / Skill · " + counts.settings + " 项设置"
+  byId("draft-summary").hidden = counts.total === 0
+  byId("save-indicator").classList.toggle("dirty", counts.total > 0)
+  byId("save").disabled = !counts.total || state.saving || counts.conflicts > 0
+  byId("review-save").disabled = byId("save").disabled
+  byId("discard").disabled = !counts.total || state.saving
+  byId("review").disabled = !counts.total || state.saving
+  byId("conflicts").hidden = counts.conflicts === 0
+}
+
+function render() {
+  if (!state.snapshot) {
+    return
+  }
+  const catalogView = ["tool", "skill"].includes(state.view)
+  byId("catalog-view").hidden = !catalogView
+  byId("runtime-view").hidden = catalogView
+  byId("sources").hidden = !catalogView
+  document.querySelector(".sidebar-heading").hidden = !catalogView
+  for (const item of document.querySelectorAll("[data-view]")) {
+    item.classList.toggle("active", item.dataset.view === state.view)
+    item.setAttribute("aria-current", String(item.dataset.view === state.view))
+  }
+  let status = "管理已关闭"
+  const snapshot = state.snapshot
+  if (snapshot.enabled) {
+    status = "管理运行中"
+  }
+  if (snapshot.conflict) {
+    status = "管理冲突"
+  }
+  byId("status").textContent = status
+  byId("status").classList.toggle("running", snapshot.enabled && !snapshot.conflict)
+  let notice = ""
+  if (snapshot.conflict) {
+    notice = snapshot.conflict
+  } else if (!snapshot.enabled) {
+    notice = "管理尚未开启。可先配置策略，再到设置中启用管理并保存。"
+  } else if (!snapshot.watchers_intact) {
+    notice = "部分目录监听已被替换，请到诊断页查看插件重载状态。"
+  }
+  byId("notice").textContent = notice
+  byId("notice").hidden = !notice
+  renderSources(source)
+  if (catalogView) {
+    const focused = document.activeElement
+    const rowId = focused?.closest("tr")?.dataset.id
+    const focusedMode = focused?.dataset.mode
+    renderCatalog({
+      render,
+      source,
+      detail: (id) => {
+        openDetail(id, { render, post })
+      },
+      group: (id) => {
+        openGroup(id, render)
       }
     })
-    controls.append(nameLabel, modeLabel, idleLabel, save)
-    function rememberDraft() {
-      groupDrafts.set(group.id, { name: name.value, mode: mode.value, idle: idle.value })
-    }
-    controls.addEventListener("input", rememberDraft)
-    controls.addEventListener("change", rememberDraft)
-    card.append(controls)
-    for (const entry of entries) {
-      const row = node("div", undefined, "entry")
-      const info = node("div", undefined, "entry-info")
-      info.append(
-        node("strong", entry.name),
-        node("span", entry.kind, "badge"),
-        node("p", entry.id, "source")
-      )
-      const description = node("details")
-      description.append(node("summary", "完整说明"), node("p", entry.description, "description"))
-      info.append(description)
-      const override = select(entry.override, true)
-      override.setAttribute("aria-label", entry.name + " 的策略")
-      override.addEventListener("change", async () => {
-        override.disabled = true
-        try {
-          await post("tool", { id: entry.id, mode: override.value })
-        } catch (cause) {
-          error(cause.message)
-          override.disabled = false
+    if (rowId && focusedMode) {
+      for (const row of byId("entries").children) {
+        if (row.dataset.id === rowId) {
+          row.querySelector('[data-mode="' + focusedMode + '"]')?.focus({ preventScroll: true })
         }
-      })
-      row.append(info, override)
-      card.append(row)
+      }
     }
-    container.append(card)
+  } else {
+    renderRuntime()
   }
-  byId("count").textContent = shown + " / " + snapshot.groups.length + " 组"
-}
-
-function renderSessions() {
-  const container = byId("sessions")
-  container.replaceChildren()
-  for (const session of snapshot.sessions) {
-    const row = node("div", undefined, "session")
-    row.append(node("strong", session.id))
-    const counters = session.counters
-    row.append(
-      node(
-        "p",
-        "已完成 " +
-          session.completed +
-          " 轮 · 自动收起 " +
-          counters.auto_unloads +
-          " 次 · 重新加载 " +
-          counters.reloads +
-          " 次 · 两轮内重载 " +
-          counters.quick_reloads +
-          " 次 · 明确点名预加载 " +
-          counters.prefetches +
-          " 次",
-        "metrics"
-      )
-    )
-    row.append(
-      node(
-        "p",
-        "能力管理步骤 " +
-          counters.management_steps +
-          " · 加载累计 " +
-          Math.round(counters.load_ms) +
-          " ms · 最高 schema 估算 " +
-          counters.max_schema_tokens +
-          " tokens",
-        "metrics"
-      )
-    )
-    container.append(row)
-  }
-  if (!snapshot.sessions.length) {
-    container.append(node("p", "尚无受管理的会话。"))
+  renderSaveBar()
+  if (byId("review-dialog").open) {
+    renderReview()
   }
 }
 
-async function refresh() {
+async function refresh(remoteRefresh = false) {
+  if (refreshPending || state.saving) {
+    return
+  }
+  refreshPending = true
   const ticket = ++generation
+  byId("refresh").disabled = true
   try {
-    const result = await bridge.apiGet("capabilities/state")
+    let result
+    if (remoteRefresh) {
+      result = await post("refresh", {})
+    } else {
+      result = await bridge.apiGet("capabilities/state")
+    }
     if (ticket !== generation) {
       return
     }
     if (!result.ready) {
-      throw new Error("能力管理尚未初始化")
+      throw new Error("能力管理尚未初始化，请稍后重试")
     }
-    snapshot = result
-    if (!dirtySettings) {
-      byId("enabled").checked = result.enabled
-      byId("new-group-mode").value = result.new_group_mode
-      byId("idle-rounds").value = result.idle_rounds
-      byId("fold-skills").checked = result.fold_skills
-      byId("archive-results").checked = result.archive_results
+    adopt(result)
+    render()
+    if (remoteRefresh) {
+      toast("目录已刷新，未保存的修改已保留")
     }
-    let status = "已连接，目录与 AstrBot 同步"
-    if (!result.enabled) {
-      status = "管理已关闭，可先设置组策略"
-    }
-    if (result.conflict) {
-      status = result.conflict
-    }
-    if (!result.watchers_intact) {
-      status = "部分变化监听已被替换，请检查插件重载状态"
-    }
-    byId("status").textContent = status
-    error(result.errors.join("\n"))
-    renderGroups()
-    renderSessions()
   } catch (cause) {
     error(cause.message)
+  } finally {
+    refreshPending = false
+    byId("refresh").disabled = false
   }
 }
 
-byId("settings").addEventListener("submit", async (event) => {
-  event.preventDefault()
-  try {
-    await post("settings", {
-      enabled: byId("enabled").checked,
-      new_group_mode: byId("new-group-mode").value,
-      idle_rounds: Number(byId("idle-rounds").value),
-      fold_skills: byId("fold-skills").checked,
-      archive_results: byId("archive-results").checked
-    })
-  } catch (cause) {
-    error(cause.message)
+async function save() {
+  if (state.saving || !state.drafts.size || draftCounts().conflicts) {
+    return
   }
-})
-byId("settings").addEventListener("change", () => {
-  dirtySettings = true
-})
-byId("search").addEventListener("input", () => {
-  if (snapshot) {
-    renderGroups()
-  }
-})
-byId("refresh").addEventListener("click", async () => {
+  state.saving = true
+  generation++
+  const body = payload()
+  renderSaveBar()
+  error()
   try {
-    await post("refresh", {})
-  } catch (cause) {
-    error(cause.message)
-  }
-})
-
-async function initialize() {
-  try {
-    if (!bridge) {
-      throw new Error("请从 AstrBot 插件页面打开")
+    const result = await post("commit", body)
+    // Clear only edits included in this request; later edits stay as a draft.
+    for (const [key, draft] of state.drafts) {
+      let sent
+      if (draft.type === "setting") {
+        sent = body.settings[draft.id]
+      } else if (draft.type === "group") {
+        sent = body.groups.find((row) => {
+          return row.id === draft.id
+        })?.[draft.field]
+      } else {
+        sent = body.tools.find((row) => {
+          return row.id === draft.id
+        })?.mode
+      }
+      if (JSON.stringify(sent) === JSON.stringify(draft.value)) {
+        state.drafts.delete(key)
+      } else if (sent !== undefined) {
+        draft.before = sent
+      }
     }
+    adopt(result.state)
+    toastOnSave = true
+    byId("review-dialog").close()
+  } catch (cause) {
+    error("保存失败：" + cause.message + "。草稿已保留。")
+  } finally {
+    state.saving = false
+    render()
+  }
+  if (toastOnSave) {
+    toast("修改已保存，新请求将使用新策略")
+    toastOnSave = false
+  } else {
+    await refresh()
+  }
+}
+
+byId("search").addEventListener("input", () => {
+  state.query = byId("search").value
+  state.page = 0
+  render()
+})
+byId("policy-filter").addEventListener("change", () => {
+  state.filter = byId("policy-filter").value
+  state.page = 0
+  render()
+})
+byId("mobile-source").addEventListener("change", () => {
+  source(byId("mobile-source").value)
+})
+byId("clear-source").addEventListener("click", () => {
+  source("")
+})
+byId("previous-page").addEventListener("click", () => {
+  state.page--
+  render()
+})
+byId("next-page").addEventListener("click", () => {
+  state.page++
+  render()
+})
+byId("select-page").addEventListener("change", () => {
+  const rows = filteredEntries().slice(
+    state.page * state.pageSize,
+    (state.page + 1) * state.pageSize
+  )
+  for (const entry of rows) {
+    if (byId("select-page").checked) {
+      state.selected.add(entry.id)
+    } else {
+      state.selected.delete(entry.id)
+    }
+  }
+  render()
+})
+byId("clear-selection").addEventListener("click", () => {
+  state.selected.clear()
+  render()
+})
+for (const control of document.querySelectorAll("[data-bulk]")) {
+  control.addEventListener("click", () => {
+    for (const id of state.selected) {
+      edit("tool", id, "mode", control.dataset.bulk)
+    }
+    toast(state.selected.size + " 项策略已加入草稿")
+    render()
+  })
+}
+byId("save").addEventListener("click", save)
+byId("review-save").addEventListener("click", save)
+byId("review").addEventListener("click", () => {
+  renderReview()
+  byId("review-dialog").showModal()
+})
+byId("discard").addEventListener("click", () => {
+  state.drafts.clear()
+  error()
+  render()
+  toast("未保存的修改已放弃")
+})
+byId("keep-mine").addEventListener("click", () => {
+  resolveConflicts(true)
+  render()
+})
+byId("use-remote").addEventListener("click", () => {
+  resolveConflicts(false)
+  render()
+})
+byId("open-settings").addEventListener("click", () => {
+  if (state.snapshot) {
+    openSettings()
+  }
+})
+byId("settings-form").addEventListener("submit", (event) => {
+  event.preventDefault()
+  applySettings()
+  render()
+})
+byId("refresh").addEventListener("click", () => {
+  error()
+  refresh(true)
+})
+for (const close of document.querySelectorAll("[data-close]")) {
+  close.addEventListener("click", () => {
+    close.closest("dialog").close()
+  })
+}
+for (const dialog of document.querySelectorAll("dialog")) {
+  dialog.addEventListener("click", (event) => {
+    const rect = dialog.getBoundingClientRect()
+    if (
+      event.target === dialog &&
+      (event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom)
+    ) {
+      dialog.close()
+    }
+  })
+}
+const mobileTabs = node("nav", undefined, "mobile-tabs")
+mobileTabs.setAttribute("aria-label", "移动端工作区")
+for (const [name, text] of [
+  ["tool", "工具"],
+  ["skill", "Skills"],
+  ["sessions", "会话"],
+  ["diagnostics", "诊断"]
+]) {
+  const tab = button(text, () => {
+    view(name)
+  })
+  tab.dataset.view = name
+  mobileTabs.append(tab)
+}
+document.querySelector("main").prepend(mobileTabs)
+for (const item of document.querySelectorAll(".sidebar [data-view]")) {
+  item.title = item.textContent.trim()
+  item.addEventListener("click", () => {
+    view(item.dataset.view)
+  })
+}
+document.querySelector(".brand").addEventListener("click", (event) => {
+  event.preventDefault()
+  view("tool")
+})
+window.addEventListener("beforeunload", (event) => {
+  if (state.drafts.size) {
+    event.preventDefault()
+    event.returnValue = ""
+  }
+})
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "/" &&
+    !document.querySelector("dialog[open]") &&
+    !document.activeElement.matches("input, textarea, select")
+  ) {
+    event.preventDefault()
+    byId("search").focus()
+  }
+})
+async function initialize() {
+  icons()
+  if (!bridge) {
+    error("请从 AstrBot 插件页面打开")
+    return
+  }
+  try {
     const context = await bridge.ready()
     if (context.isDark) {
       document.documentElement.dataset.theme = "dark"
@@ -293,12 +376,11 @@ async function initialize() {
 }
 initialize()
 setInterval(() => {
-  const focused = document.activeElement
   if (
-    dirtySettings ||
-    groupDrafts.size ||
     document.hidden ||
-    focused?.matches("input, select, button")
+    state.saving ||
+    document.querySelector("dialog[open]") ||
+    document.activeElement?.matches("input, select, button")
   ) {
     return
   }

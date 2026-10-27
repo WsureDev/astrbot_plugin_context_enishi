@@ -3,50 +3,228 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Enishi 工具与 Skill 管理</title>
+    <title>Enishi · 工具与 Skill 管理</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="catalog.css" />
+    <link rel="stylesheet" href="panels.css" />
+    <link rel="stylesheet" href="layout.css" />
     <script src="/api/plugin/page/bridge-sdk.js"></script>
-    <script src="app.js" defer></script>
+    <script type="module" src="app.js"></script>
   </head>
   <body>
-    <main>
-      <header>
-        <div>
-          <p class="brand">CONTEXT ENISHI</p>
-          <h1>工具与 Skill 管理</h1>
-          <p>常用能力放在一级，其他能力收纳后按需展开。完整定义和原文保留。</p>
-        </div>
-        <button id="refresh" type="button">刷新目录</button>
-      </header>
-      <p id="status" role="status">正在连接…</p>
-      <p id="error" role="alert" hidden></p>
-      <form id="settings">
-        <label class="check"><input id="enabled" type="checkbox" />启用管理</label>
-        <label
-          >新组默认策略<select id="new-group-mode">
-            <option value="folded">收纳</option>
-            <option value="primary">一级常驻</option>
-          </select></label
+    <div class="workspace">
+      <aside class="sidebar">
+        <a class="brand" href="#tools" aria-label="Enishi 工具目录"
+          ><span class="brand-mark">E<span>·</span></span
+          ><span>ENISHI<small>能力工作台</small></span></a
         >
-        <label>默认闲置轮数<input id="idle-rounds" type="number" min="1" value="5" /></label>
-        <label class="check"><input id="fold-skills" type="checkbox" />折叠 Skill</label>
-        <label class="check"><input id="archive-results" type="checkbox" />收纳闲置结果</label>
-        <button type="submit">保存设置</button>
+        <div class="sidebar-caption">工作区 <span>WORKSPACE</span></div>
+        <nav id="workspace-nav" aria-label="工作区">
+          <button data-view="tool" class="nav-item active">
+            <span data-icon="grid"></span>工具目录 <span id="tool-total" class="nav-count">—</span>
+          </button>
+          <button data-view="skill" class="nav-item">
+            <span data-icon="book"></span>Skills <span id="skill-total" class="nav-count">—</span>
+          </button>
+        </nav>
+        <div class="sidebar-heading">
+          <span>来源</span
+          ><button id="clear-source" class="subtle" title="查看全部来源">全部</button>
+        </div>
+        <nav id="sources" aria-label="来源分组"></nav>
+        <div class="sidebar-bottom">
+          <button data-view="sessions" class="nav-item">
+            <span data-icon="activity"></span>会话状态
+          </button>
+          <button data-view="diagnostics" class="nav-item">
+            <span data-icon="pulse"></span>诊断
+          </button>
+          <div class="sidebar-foot"><span class="live-dot"></span>按需展开 · 完整定义保留</div>
+        </div>
+      </aside>
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="breadcrumb">Context Enishi <span>/</span> 工具与 Skill 管理</div>
+          <div class="top-actions">
+            <span id="status" class="status-pill">连接中</span
+            ><button id="refresh" class="icon-button" title="刷新目录" aria-label="刷新目录">
+              <span data-icon="refresh"></span></button
+            ><button id="open-settings" class="button secondary">
+              <span data-icon="settings"></span>设置
+            </button>
+          </div>
+        </header>
+        <main>
+          <div id="notice" class="notice" role="status" hidden></div>
+          <div id="error" class="notice danger" role="alert" hidden></div>
+          <div id="conflicts" class="notice warning" hidden>
+            <span>部分修改与最新配置冲突。选择保留草稿或采用远端修改。</span
+            ><button id="keep-mine">保留我的修改</button
+            ><button id="use-remote">采用远端修改</button>
+          </div>
+          <section id="catalog-view">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">CAPABILITY LIBRARY</p>
+                <h1 id="page-title">工具目录</h1>
+                <p class="page-subtitle" id="page-subtitle">常用工具常驻，低频工具按需加载。</p>
+              </div>
+              <div class="heading-count">
+                <strong id="visible-count">—</strong><span>当前显示</span>
+              </div>
+            </div>
+            <div class="catalog-summary" id="catalog-summary"></div>
+            <section
+              id="group-policy"
+              class="group-policy"
+              hidden
+              aria-label="当前组策略"
+            ></section>
+            <div class="toolbar">
+              <label class="search-box"
+                ><span data-icon="search"></span
+                ><input
+                  id="search"
+                  type="search"
+                  placeholder="搜索名称、用途或来源…"
+                  aria-label="搜索能力"
+                /><kbd>/</kbd></label
+              ><select id="policy-filter" aria-label="策略筛选">
+                <option value="all">全部策略</option>
+                <option value="primary">常驻</option>
+                <option value="folded">按需</option>
+                <option value="override">单独覆盖</option></select
+              ><select id="mobile-source" aria-label="来源筛选">
+                <option value="">全部来源</option>
+              </select>
+            </div>
+            <div id="bulk-bar" class="bulk-bar" hidden>
+              <strong id="selection-count"></strong>
+              <div class="bulk-actions">
+                <button data-bulk="primary">设为常驻</button
+                ><button data-bulk="folded">设为按需</button
+                ><button data-bulk="inherit">恢复跟随组</button
+                ><button id="clear-selection" class="subtle">取消选择</button>
+              </div>
+            </div>
+            <div class="catalog-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="check-cell">
+                      <input id="select-page" type="checkbox" aria-label="选择当前页" />
+                    </th>
+                    <th>名称与用途</th>
+                    <th class="source-column">来源</th>
+                    <th>配置策略</th>
+                    <th class="effective-column">生效策略</th>
+                  </tr>
+                </thead>
+                <tbody id="entries"></tbody>
+              </table>
+              <div id="empty" class="empty-state" hidden></div>
+              <footer class="table-footer">
+                <span id="result-count"></span>
+                <div>
+                  <button id="previous-page" class="icon-button" aria-label="上一页">←</button
+                  ><span id="page-number"></span
+                  ><button id="next-page" class="icon-button" aria-label="下一页">→</button>
+                </div>
+              </footer>
+            </div>
+            <p class="catalog-help">
+              <span class="help-mark">i</span
+              >“按需”隐藏工具定义，模型仍可查找并加载。配置修改用于新请求，已执行的任务继续运行。
+            </p>
+          </section>
+          <section id="runtime-view" hidden></section>
+        </main>
+        <footer class="save-bar" id="save-bar">
+          <div>
+            <span id="save-indicator" class="saved-dot"></span
+            ><strong id="dirty-count">所有修改已保存</strong><span id="draft-summary"></span>
+          </div>
+          <div class="save-actions">
+            <button id="review" class="button secondary" disabled>查看修改</button
+            ><button id="discard" class="button ghost" disabled>放弃修改</button
+            ><button id="save" class="button primary" disabled>
+              <span data-icon="check"></span>保存修改
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
+    <dialog id="detail-dialog" class="drawer">
+      <div class="dialog-top">
+        <span class="eyebrow">能力详情</span
+        ><button class="icon-button" data-close aria-label="关闭详情">×</button>
+      </div>
+      <div id="detail-content"></div>
+    </dialog>
+    <dialog id="settings-dialog" class="settings-dialog">
+      <div class="dialog-top">
+        <div>
+          <p class="eyebrow">PREFERENCES</p>
+          <h2>工作台设置</h2>
+        </div>
+        <button class="icon-button" data-close aria-label="关闭设置">×</button>
+      </div>
+      <form id="settings-form">
+        <label class="switch-row"
+          ><span
+            ><strong>启用工具与 Skill 管理</strong><small>可以先配置策略，再开启管理。</small></span
+          ><input id="enabled" type="checkbox" role="switch"
+        /></label>
+        <div class="setting-section">
+          <h3>默认策略</h3>
+          <label class="field-row"
+            ><span>新增组的策略<small>仅用于以后首次发现的组。</small></span
+            ><select id="new-group-mode">
+              <option value="folded">按需</option>
+              <option value="primary">常驻</option>
+            </select></label
+          ><label class="field-row"
+            ><span>闲置多少轮后收起<small>一次用户请求及其工具链算一轮。</small></span
+            ><input id="idle-rounds" type="number" min="1" required
+          /></label>
+        </div>
+        <div class="setting-section">
+          <h3>上下文内容</h3>
+          <label class="switch-row"
+            ><span><strong>折叠 Skill</strong><small>按需读取完整 Skill 正文。</small></span
+            ><input id="fold-skills" type="checkbox" role="switch" /></label
+          ><label class="switch-row"
+            ><span><strong>收纳闲置工具结果</strong><small>保留完整存档，可随时恢复。</small></span
+            ><input id="archive-results" type="checkbox" role="switch"
+          /></label>
+        </div>
+        <details class="advanced">
+          <summary>高级设置</summary>
+          <label class="field-row"
+            ><span>MCP 兜底刷新间隔（秒）<small>0 关闭定时拉取，仍响应变更通知。</small></span
+            ><input id="mcp-poll-seconds" type="number" min="0" required
+          /></label>
+        </details>
+        <div class="dialog-footer">
+          <span>加入草稿后，统一保存生效。</span
+          ><button type="submit" class="button primary">加入修改</button>
+        </div>
       </form>
-      <p class="hint">
-        新工具继承原组策略；默认策略只用于首次发现的组。一次用户请求及其完整工具链算一轮，常驻能力保持展开。
-      </p>
-      <nav>
-        <label
-          >搜索能力<input id="search" type="search" placeholder="工具名、Skill 或来源组" /></label
-        ><span id="count"></span>
-      </nav>
-      <section id="groups" aria-label="能力分组"></section>
-      <section class="session-panel">
-        <h2>会话与使用成本</h2>
-        <p>查看已完成轮数、自动收起和短期重新加载。上下文收起后，完整资料仍可按引用恢复。</p>
-        <div id="sessions"></div>
-      </section>
-    </main>
+    </dialog>
+    <dialog id="review-dialog" class="review-dialog">
+      <div class="dialog-top">
+        <div>
+          <p class="eyebrow">PENDING CHANGES</p>
+          <h2>待保存修改</h2>
+        </div>
+        <button class="icon-button" data-close aria-label="关闭修改清单">×</button>
+      </div>
+      <div id="review-content"></div>
+      <div class="dialog-footer">
+        <span>修改将在保存后用于新请求。</span
+        ><button class="button primary" id="review-save">保存全部修改</button>
+      </div>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
   </body>
 </html>

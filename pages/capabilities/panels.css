@@ -1,0 +1,235 @@
+dialog {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 24px;
+  max-height: 90dvh;
+}
+dialog::backdrop {
+  background: #11182760;
+  backdrop-filter: blur(3px);
+}
+.dialog-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+.dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  margin-top: 20px;
+}
+.dialog-footer span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-dialog {
+  width: 540px;
+}
+.switch-row,
+.field-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  padding: 13px 0;
+}
+.switch-row strong {
+  font-weight: 550;
+  font-size: 13px;
+}
+input[role="switch"] {
+  appearance: none;
+  width: 36px;
+  height: 21px;
+  border: none;
+  border-radius: 14px;
+  background: var(--muted);
+  opacity: 0.65;
+  padding: 3px;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+input[role="switch"]::before {
+  content: "";
+  display: block;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.15s;
+}
+input[role="switch"]:checked {
+  background: var(--teal);
+  opacity: 1;
+}
+input[role="switch"]:checked::before {
+  transform: translateX(15px);
+}
+.setting-section {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 18px;
+}
+.setting-section h3 {
+  margin-bottom: 6px;
+}
+.field-row {
+  font-size: 13px;
+}
+.field-row input {
+  width: 90px;
+}
+.advanced {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 18px;
+  font-size: 13px;
+}
+summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.drawer {
+  width: 480px;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0 0 0 auto;
+  border-radius: 16px 0 0 16px;
+  border-right: 0;
+  padding: 28px;
+}
+.drawer h2 {
+  overflow-wrap: anywhere;
+}
+.detail-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 650;
+  margin-top: 24px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.full-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.85;
+}
+.id-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+code,
+pre {
+  font:
+    12px/1.7 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--soft);
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.drawer input[type="text"] {
+  width: 100%;
+}
+.review-dialog {
+  width: 650px;
+}
+.change-row {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+.change-row strong {
+  display: block;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.change-row p {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: 90vw;
+  padding: 11px 20px;
+  background: var(--sidebar);
+  border: 1px solid #44506a;
+  color: #f3f6fc;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+}
+.runtime-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px;
+  margin-top: 18px;
+}
+.runtime-card select {
+  max-width: 100%;
+  width: 100%;
+  margin-bottom: 16px;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  margin: 18px 0;
+}
+.metric {
+  background: var(--surface);
+  padding: 18px;
+}
+.metric strong {
+  display: block;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+.metric span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.runtime-card ul {
+  padding-left: 20px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.diagnostic-line {
+  padding: 12px 0;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}

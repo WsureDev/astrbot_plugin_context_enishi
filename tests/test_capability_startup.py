@@ -96,7 +96,7 @@ async def test_startup_and_shutdown_restore_all_global_hooks(
     await service.initialize(tmp_path, Runner, None)
     api.install()
     assert service.snapshot()["ready"]
-    assert len(context.registered_web_apis) == 5
+    assert len(context.registered_web_apis) == 4
     assert service.store.groups["plugin:example"]["mode"] == "folded"
     api.close()
     await service.close()

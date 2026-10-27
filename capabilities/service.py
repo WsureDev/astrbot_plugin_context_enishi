@@ -13,6 +13,7 @@ from .catalog import digest, skill_entries, tool_entries
 from .controller import TOOL_RULES, RunController
 from .integration import CapabilityIntegration
 from .policy import META_NAMES, CapabilityPolicy, lazy_conflict, participates
+from .preferences import CapabilityPreferences
 from .registry import RegistryObserver
 from .skills import SkillIntegration
 from .state import Session, StateStore
@@ -46,6 +47,7 @@ class CapabilityService:
         self.observer = RegistryObserver(self)
         self.skills = SkillIntegration(self)
         self.integration = CapabilityIntegration(self)
+        self.preferences = CapabilityPreferences(self)
 
     @property
     def policy(self):
@@ -310,6 +312,7 @@ class CapabilityService:
                 {
                     "id": group,
                     **policy,
+                    "source_name": self.source_name(group),
                     "available": bool(entries),
                     "entries": [
                         {
@@ -332,8 +335,10 @@ class CapabilityService:
             "enabled": self.policy.enabled,
             "conflict": lazy_conflict(self.context),
             "revision": self.revision,
+            "policy_revision": self.preferences.revision(),
             "new_group_mode": self.policy.new_group_mode,
             "idle_rounds": self.policy.idle_rounds,
+            "mcp_poll_seconds": self.policy.mcp_poll_seconds,
             "fold_skills": self.policy.fold_skills,
             "archive_results": self.policy.archive_results,
             "groups": groups,
@@ -361,11 +366,34 @@ class CapabilityService:
                     "schema_chars": run.schema_chars,
                     "estimated_schema_tokens": run.schema_tokens,
                     "completed": run.closed,
+                    "visible_ids": [
+                        entry.id for entry in run.entries.values() if run.visible(entry)
+                    ],
                 }
                 for run in list(self.run_refs.values())
                 if run.injected is not None
             ],
         }
+
+    def source_name(self, group):
+        kind, _, key = group.partition(":")
+        if kind == "plugin":
+            for metadata in self.plugin_map().values():
+                if field(metadata, "name") == key:
+                    return field(metadata, "display_name") or key
+        if kind == "builtin":
+            return {
+                "files": "文件操作",
+                "computer": "电脑与执行",
+                "messaging": "消息与通信",
+                "other": "其他内置工具",
+            }.get(key, key)
+        if kind == "skill":
+            source, _, owner = key.partition(":")
+            return {"local": "本地 Skills", "sandbox_only": "沙箱 Skills"}.get(
+                source, owner or source
+            )
+        return key
 
     def catalog_entries(self):
         catalog = {}
