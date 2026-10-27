@@ -355,6 +355,36 @@
       }
     }
   },
+  "history_budget": {
+    "type": "object",
+    "description": "历史上下文范围",
+    "hint": "独立于图片模式、群聊流水和工具收纳。按字符控制旧上下文，直接移除最老完整轮次，不额外调用模型；不截断当前任务，不限制 Monitor 存档。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用历史字数控制",
+        "default": true
+      },
+      "max_chars": {
+        "type": "int",
+        "description": "历史上限（字符）",
+        "default": 60000,
+        "hint": "旧消息按 JSON 字符数计量，含工具结果和调用参数；不含系统提示、工具定义和当前任务。超过上限后按整轮收缩。"
+      },
+      "target_chars": {
+        "type": "int",
+        "description": "收缩后的目标（字符）",
+        "default": 40000,
+        "hint": "保留最近完整轮次，尽量收缩到目标附近。已落在目标与上限之间时，不为凑字数再丢整轮。目标必须大于 0 且不高于历史上限，不会隐藏改写你填写的数值。"
+      },
+      "max_group_chars": {
+        "type": "int",
+        "description": "群聊流水总预算（字符）",
+        "default": 12000,
+        "hint": "限制新旧群聊增量块合计，优先保留最近完整消息行；0 不单独限制流水。当前用户消息和完整原生图片 ID 不做字符截断。"
+      }
+    }
+  },
   "capabilities": {
     "type": "object",
     "description": "工具与 Skill 收纳",

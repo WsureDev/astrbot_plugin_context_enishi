@@ -10,6 +10,7 @@ from ..channels.media import TRANSFER_CONSUMER, TRANSFER_CONTEXT
 from ..channels.native import field
 from ..settings import MODE_REFERENCE_ONLY
 from .compatibility import LegacyBatchDelivery
+from .history import budget as history_budget
 
 BACKGROUND_IMAGES = ContextVar("channel_media_background_images", default=None)
 BACKGROUND_RUN = ContextVar("channel_media_background_run", default=False)
@@ -143,6 +144,9 @@ class RunnerIntegration:
         manager = runner.request_context_manager
         process = manager.process
         integration = self
+        history = history_budget.HistoryWindow(
+            self.owner.settings, runner, self.owner.policy.text_factory
+        )
         event = field(field(runner.run_context, "context"), "event")
         if event is not None:
             self.owner.channels.register_runner(event, runner.run_context)
@@ -156,6 +160,13 @@ class RunnerIntegration:
                 runner
             ):
                 await integration.owner.policy.before_step(runner)
+                messages = (
+                    args[0]
+                    if args
+                    else kwargs.get("messages", runner.run_context.messages)
+                )
+                if history.apply(messages):
+                    kwargs = {**kwargs, "trusted_token_usage": 0}
             return await process(*args, **kwargs)
 
         wrapped_process._channel_media_original = process

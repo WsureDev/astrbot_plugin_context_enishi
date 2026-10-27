@@ -30,6 +30,9 @@ from .store import FlowStore
 
 logger = logging.getLogger(__name__)
 EXTERNAL_FLOW = "astrbot_plugin_group_context_flow"
+FLOW_BUDGET_COVERAGE = (
+    "group messages omitted by the configured injection/history budget"
+)
 
 
 @dataclass
@@ -227,6 +230,12 @@ class GroupFlow:
         records = [entry["record"] for entry in entries]
         delta_meta = dict(metadata)
         budget = options["max_delta_chars"]
+        history = self.settings.history_options()
+        if history["enabled"] and history["max_group_chars"]:
+            if budget:
+                budget = min(budget, history["max_group_chars"])
+            else:
+                budget = history["max_group_chars"]
         while records:
             if skipped:
                 delta_meta["skipped_count"] = skipped
@@ -254,13 +263,18 @@ class GroupFlow:
                     },
                     tag=DELTA_TAG,
                 )
-            added = dict(role="user", content=rendered)
-            contexts.append(added)
-            request._enishi_flow_delta = added
+            if not budget or len(rendered) <= budget:
+                added = dict(role="user", content=rendered)
+                contexts.append(added)
+                request._enishi_flow_delta = added
+            else:
+                request._enishi_flow_delta = None
         else:
             request._enishi_flow_delta = None
         request.contexts = contexts
         current_meta = dict(metadata, source="enishi_live", injected_count=len(records))
+        if skipped:
+            current_meta.update(skipped_count=skipped, coverage=FLOW_BUDGET_COVERAGE)
         if not records and not skipped:
             current_meta["coverage"] = (
                 "No additional group messages to inject from Enishi's own live log; "

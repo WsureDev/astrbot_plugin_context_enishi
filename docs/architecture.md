@@ -34,6 +34,8 @@ flowchart TB
 
 `ContextOrganizer` 管理 `MediaPolicy`、runner 集成、原生群聊流水和文字缓存。`additions.py` 统一组合临时内容。已有监控占用的 `step`、`_iter_llm_responses` 和 `execute` 保持函数身份不变。外部 Flow 的记录与格式包装已移除。
 
+`context/history/` 在 runner 装配时绑定当前用户消息，在上下文处理边界按可配置 JSON 字符预算移除最老整轮。它把群聊增量与对应问答、工具图片与原工具链正确归组；流水只删完整旧行，完整图片标记只去重，不截断 ID。当前请求及其增量凭据受保护，字符默认值集中于 `settings.HISTORY_DEFAULTS`；不额外调用模型，也不修改 Monitor 存档。见 [历史预算](history-budget.md)。
+
 `channels/messages.py` 从原生事件与 QQ/TG 载荷读取官方消息字段，`message_components.py` 提取显式引用和提及，`meta.py` 渲染并转义 META 表格。`awareness/render.py` 将查询的公共范围、覆盖和统计信息放到一个头部，避免逐条复制。
 
 `context/group_flow/store.py` 是 Enishi 自己的单进程文件流水，所有日志及共享游标状态操作由同一个锁保护。`service.py` 选取 `cursor < seq < trigger_seq` 的记录，按原生消息 ID 而不是正文去重。`history.py` 在框架会话保存成功后检查当前消息与后续 assistant 记录，再提交游标；仅收到 LLM 响应不提交。边界代次、单调水位和任务归属防止旧任务覆盖 reset/new。不读写旧 Flow 的数据，也不提供导入导出桥接。详见 [原生群聊流水](group-flow.md)。

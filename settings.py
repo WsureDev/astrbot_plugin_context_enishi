@@ -18,6 +18,12 @@ CONTEXT_KEYS = (
     "caption_cache_ttl_hours",
     "max_caption_chars",
 )
+HISTORY_DEFAULTS = {
+    "enabled": True,
+    "max_chars": 60000,
+    "target_chars": 40000,
+    "max_group_chars": 12000,
+}
 
 
 def migrate_channel_settings(config):
@@ -167,6 +173,22 @@ class Settings:
             record_self_messages=bool(selected.get("record_self_messages", False)),
             record_empty_messages=bool(selected.get("record_empty_messages", True)),
         )
+
+    def history_options(self):
+        selected = self.config.get("history_budget", {}) or {}
+        if not isinstance(selected, dict):
+            raise ValueError("历史上下文范围必须是配置对象")
+        options = {**HISTORY_DEFAULTS, **selected}
+        if type(options["enabled"]) is not bool:
+            raise ValueError("历史控制开关必须是布尔值")
+        for key in ("max_chars", "target_chars", "max_group_chars"):
+            if type(options[key]) is not int or options[key] < 0:
+                raise ValueError(key + " 必须是非负整数")
+        if options["max_chars"] == 0 or options["target_chars"] == 0:
+            raise ValueError("历史上限和目标必须大于 0；停用控制请关闭开关")
+        if options["target_chars"] > options["max_chars"]:
+            raise ValueError("历史收缩目标不能大于历史上限")
+        return options
 
     def integer(self, key: str, default: int, minimum: int, maximum: int) -> int:
         return min(max(int(self.config.get(key, default)), minimum), maximum)

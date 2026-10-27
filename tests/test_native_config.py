@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from astrbot_plugin_context_enishi.settings import HISTORY_DEFAULTS
+
 
 def test_schema_defaults_and_save_validate_with_actual_astrbot_code():
     source = os.environ.get("ASTRBOT_SOURCE")
@@ -73,3 +75,4 @@ def test_schema_defaults_and_save_validate_with_actual_astrbot_code():
     assert validated["channel_settings"][0]["context"]["image_mode"] == "disabled"
     assert validated["channel_settings"][1]["context"]["caption_cache_ttl_hours"] == 0
     assert validated["channel_settings"][1]["awareness"]["inject_environment"] is False
+    assert validated["history_budget"] == HISTORY_DEFAULTS
