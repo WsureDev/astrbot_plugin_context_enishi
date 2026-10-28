@@ -23,6 +23,35 @@ TEST_SLOW_SECONDS = 0.001
 TEST_TIMEOUT_SECONDS = 1
 
 
+async def test_diagnostics_default_off_and_switch_does_not_change_business_flow(
+    monkeypatch,
+):
+    native_logger = Mock()
+    monkeypatch.setattr(observability, "logger", native_logger)
+    monkeypatch.setattr(
+        observability.asyncio,
+        "create_task",
+        Mock(side_effect=AssertionError("watcher created")),
+    )
+    config = {}
+    diagnostics = Diagnostics(config)
+    event = Event()
+    diagnostics.received(event)
+    async with diagnostics.span("disabled", event):
+        assert not diagnostics.enabled
+    with pytest.raises(ValueError, match="original error"):
+        async with diagnostics.span("disabled.failure", event):
+            raise ValueError("original error")
+    assert not native_logger.mock_calls
+    assert not event.extra and observability.TRACE_EVENT.get() is None
+    config["diagnostics"] = {"enabled": True, "slow_phase_seconds": 0}
+    diagnostics.emit("enabled", event)
+    assert native_logger.info.call_count == 1
+    config["diagnostics"]["enabled"] = False
+    diagnostics.emit("disabled", event)
+    assert native_logger.info.call_count == 1
+
+
 async def test_nested_phase_logs_use_same_astrbot_trace_and_emit_slow_wait_stack(
     monkeypatch,
 ):
@@ -31,7 +60,7 @@ async def test_nested_phase_logs_use_same_astrbot_trace_and_emit_slow_wait_stack
     warning = asyncio.Event()
     native_logger.warning.side_effect = lambda *args, **kwargs: warning.set()
     diagnostics = Diagnostics(
-        {"diagnostics": {"slow_phase_seconds": TEST_SLOW_SECONDS}}
+        {"diagnostics": {"enabled": True, "slow_phase_seconds": TEST_SLOW_SECONDS}}
     )
     event = Event()
     async with diagnostics.span("prepare", event):
@@ -51,7 +80,9 @@ async def test_failure_retains_full_exception_traceback(caplog, monkeypatch):
     monkeypatch.setattr(
         observability, "logger", logging.getLogger("diagnostics-native-contract")
     )
-    diagnostics = Diagnostics({"diagnostics": {"slow_phase_seconds": 0}})
+    diagnostics = Diagnostics(
+        {"diagnostics": {"enabled": True, "slow_phase_seconds": 0}}
+    )
     with pytest.raises(ValueError, match="probe failure"):
         async with diagnostics.span("request", Event()):
             raise ValueError("probe failure")
@@ -63,7 +94,9 @@ async def test_failure_retains_full_exception_traceback(caplog, monkeypatch):
 
 
 async def test_diagnostic_lock_is_released_after_cancellation():
-    diagnostics = Diagnostics({"diagnostics": {"slow_phase_seconds": 0}})
+    diagnostics = Diagnostics(
+        {"diagnostics": {"enabled": True, "slow_phase_seconds": 0}}
+    )
     lock = asyncio.Lock()
     acquired = asyncio.Event()
 
@@ -106,7 +139,7 @@ async def test_native_alias_and_session_wait_are_observed_and_restored(monkeypat
     monkeypatch.setitem(sys.modules, "astrbot.core", core)
     monkeypatch.setitem(sys.modules, INTERNAL_STAGE_MODULE, internal)
     diagnostics = Diagnostics(
-        {"diagnostics": {"slow_phase_seconds": TEST_SLOW_SECONDS}}
+        {"diagnostics": {"enabled": True, "slow_phase_seconds": TEST_SLOW_SECONDS}}
     )
     trace = RequestTrace(SimpleNamespace(context=context, diagnostics=diagnostics))
     trace.install()

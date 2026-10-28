@@ -55,14 +55,14 @@ class RequestTrace:
 
     def waiting(self, event):
         task = asyncio.current_task()
-        if task is not None:
+        if task is not None and self.service.diagnostics.enabled:
             self.waiters[task] = event
 
     def lock(self, original):
         @asynccontextmanager
         async def traced(*args, **kwargs):
             event = self.waiters.get(asyncio.current_task())
-            if event is None:
+            if event is None or not self.service.diagnostics.enabled:
                 async with original(*args, **kwargs) as value:
                     yield value
                 return
@@ -86,6 +86,8 @@ class RequestTrace:
             signature = inspect.signature(original)
 
             async def traced(*args, **kwargs):
+                if not self.service.diagnostics.enabled:
+                    return await original(*args, **kwargs)
                 bound = signature.bind(*args, **kwargs)
                 context = bound.arguments.get("plugin_context")
                 if context is not None and context is not self.service.context:

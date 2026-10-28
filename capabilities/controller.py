@@ -8,6 +8,7 @@ from ..channels.native import field
 from .activation import load, unload
 from .catalog import Entry, estimate_tokens, find, group_entries, render, unwrap
 from .resources import RunResources, set_content
+from .skill_source import matches_skill_path
 
 TOOL_RULES = (
     "[Enishi capabilities] Uncommon tools and skills are folded. "
@@ -254,10 +255,12 @@ class RunController:
                                 candidate
                                 for candidate in self.entries.values()
                                 if candidate.kind == "skill"
-                                and str(field(candidate.value, "path", "")).replace(
-                                    "\\", "/"
+                                and matches_skill_path(
+                                    self.service.context,
+                                    self.event,
+                                    candidate.value,
+                                    path,
                                 )
-                                == path.replace("\\", "/")
                             ),
                             None,
                         )

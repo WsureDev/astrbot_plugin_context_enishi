@@ -20,7 +20,7 @@ except ImportError:
     logger = logging.getLogger(PLUGIN)
 
 DIAGNOSTIC_DEFAULTS = {
-    "enabled": True,
+    "enabled": False,
     "log_group_messages": True,
     "slow_phase_seconds": 10,
     "include_task_stacks": True,
@@ -59,8 +59,12 @@ class Diagnostics:
     def options(self):
         return {**DIAGNOSTIC_DEFAULTS, **(self.config.get("diagnostics", {}) or {})}
 
+    @property
+    def enabled(self):
+        return bool(self.options["enabled"])
+
     def emit(self, stage, event=None, *, level="info", **details):
-        if not self.options["enabled"]:
+        if not self.enabled:
             return
         event = event or TRACE_EVENT.get()
         if event is not None:
@@ -91,7 +95,7 @@ class Diagnostics:
         )
 
     def received(self, event):
-        if not self.options["log_group_messages"]:
+        if not self.enabled or not self.options["log_group_messages"]:
             return
         obj = field(event, "message_obj")
         mentions = []
@@ -127,7 +131,7 @@ class Diagnostics:
 
     @asynccontextmanager
     async def span(self, stage, event=None, **details):
-        if not self.options["enabled"]:
+        if not self.enabled:
             yield
             return
         started = time.monotonic()

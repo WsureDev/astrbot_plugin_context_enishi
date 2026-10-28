@@ -3,11 +3,11 @@ from __future__ import annotations
 import inspect
 from contextvars import ContextVar
 from dataclasses import replace
-from pathlib import Path
 
 from ..channels.native import field
 from .catalog import digest, skill_entries
 from .patches import Patches
+from .skill_source import DEFAULT_SANDBOX_BOOTER, NEO_WORKSPACE_ROOT
 
 SKILL_SCOPE = ContextVar("enishi_skill_scope", default=None)
 
@@ -113,6 +113,13 @@ class SkillIntegration:
                 + remaining_rules
             )
             runtime = scope[2].get("computer_use_runtime", "none")
+            booter = scope[2].get("sandbox", {}).get("booter", DEFAULT_SANDBOX_BOOTER)
+            if runtime == "sandbox" and booter == "shipyard_neo":
+                folded_rules += (
+                    f"\nFilesystem API paths in Shipyard Neo are relative to {NEO_WORKSPACE_ROOT}: "
+                    "use skills/<name>/references/... for supporting files. "
+                    "The resource's original absolute path remains valid for shell commands.\n"
+                )
             entries = skill_entries(skills, local_metadata=runtime in {"local", "none"})
             entries = {
                 key: replace(
@@ -155,24 +162,3 @@ class SkillIntegration:
 
     def close(self):
         self.patches.close()
-
-
-async def read_skill(context, event, skill):
-    config = context.get_config(umo=event.unified_msg_origin) or {}
-    runtime = config.get("provider_settings", {}).get("computer_use_runtime", "none")
-    path = str(field(skill, "path", ""))
-    if not path or path.replace("\\", "/").rsplit("/", 1)[-1] != "SKILL.md":
-        raise ValueError("Skill 没有有效的原生 SKILL.md 定位")
-    if runtime in {"none", "local"} and field(skill, "source_type") != "sandbox_only":
-        import asyncio
-
-        return await asyncio.to_thread(Path(path).read_text, encoding="utf-8-sig")
-    if runtime == "none":
-        raise ValueError("此 Skill 位于沙箱中，当前会话未启用沙箱运行环境")
-    from astrbot.core.computer.computer_client import get_booter
-
-    booter = await get_booter(context, event.unified_msg_origin)
-    result = await booter.fs.read_file(path, encoding="utf-8", offset=None, limit=None)
-    if result.get("success") is False or not isinstance(result.get("content"), str):
-        raise ValueError("无法从当前运行环境完整读取 Skill")
-    return result["content"]

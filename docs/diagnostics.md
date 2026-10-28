@@ -4,13 +4,15 @@
 
 | 字段 | 默认值 | 作用 |
 | --- | --- | --- |
-| `diagnostics.enabled` | `true` | 开启阶段诊断 |
+| `diagnostics.enabled` | `false` | 开启阶段诊断；关闭时不生成慢阶段监测任务 |
 | `diagnostics.log_group_messages` | `true` | 记录群消息进入时的唤醒标记、提及目标、自身 ID、角色与插件范围 |
 | `diagnostics.slow_phase_seconds` | `10` | 阶段仍未完成时提示 waiting；0 关闭慢阶段提示 |
 | `diagnostics.include_task_stacks` | `true` | 慢阶段附加当前任务的 await 调用栈 |
 | `capabilities.mcp_refresh_timeout_seconds` | `15` | 单次远程 MCP 目录拉取的超时，必须大于 0 |
 
 诊断默认常量集中在 `observability.py` 开头；MCP 超时默认常量在 `capabilities/policy.py` 开头。慢阶段提示只记录一次，不取消请求；MCP 超时仅取消 Enishi 发起的该次目录拉取，不关闭原生连接。
+
+普通插件配置的「请求诊断日志 → 启用阶段诊断」是总开关。默认关闭，排查时再打开；已显式保存为开启的配置不会被新默认值覆盖，需要手动关闭。关闭诊断仍会通过 AstrBot logger 记录真实业务错误，不影响 MCP 刷新超时、已失效连接处理等修复。
 
 ## 关联一条消息
 

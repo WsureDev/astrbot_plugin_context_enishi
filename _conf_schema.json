@@ -363,7 +363,8 @@
       "enabled": {
         "type": "bool",
         "description": "启用阶段诊断",
-        "default": true
+        "default": false,
+        "hint": "默认关闭，排查卡住时再开启。关闭后不生成阶段日志、等待栈或慢阶段任务；真实业务错误仍记录。"
       },
       "log_group_messages": {
         "type": "bool",

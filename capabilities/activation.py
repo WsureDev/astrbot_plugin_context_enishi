@@ -4,7 +4,7 @@ import json
 
 from ..channels.native import field
 from .catalog import estimate_tokens
-from .skills import read_skill
+from .skill_source import read_skill
 
 
 async def load(run, targets):
@@ -30,7 +30,13 @@ async def load(run, targets):
             ):
                 raise ValueError("工具来源已卸载或停用，请重新查询目录")
             if entry.kind == "skill":
-                content = await read_skill(run.service.context, run.event, entry.value)
+                try:
+                    content = await read_skill(
+                        run.service.context, run.event, entry.value
+                    )
+                except (ValueError, OSError) as exc:
+                    run.service.failure("Skill read [" + entry.id + "]", exc)
+                    raise
                 ref = await run.service.io(
                     run.service.artifacts.put,
                     run.key,
