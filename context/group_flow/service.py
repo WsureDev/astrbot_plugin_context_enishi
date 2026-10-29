@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ...channels.messages import event_meta, event_record
 from ...channels.meta import (
+    CONTENT_RULES,
     CURRENT_TAG,
     DELTA_TAG,
     META_RULES,
@@ -294,6 +295,8 @@ class GroupFlow:
         system = str(field(request, "system_prompt", "") or "")
         if META_RULES not in system:
             request.system_prompt = system + "\n" + META_RULES
+        if CONTENT_RULES not in request.system_prompt:
+            request.system_prompt += "\n" + CONTENT_RULES
         self._prune()
         run_id = uuid.uuid4().hex
         try:

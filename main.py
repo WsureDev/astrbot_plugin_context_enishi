@@ -261,7 +261,7 @@ class EnishiPlugin(Star):
     async def get_channel_message(
         self, event: AstrMessageEvent, message_id: str
     ) -> str:
-        """按原生消息 ID 查询消息文字及图片 ID。QQ 使用 NapCat；TG 仅能读取当前载荷中的当前或引用消息。
+        """按原生消息 ID 查询消息文字、图片和非文本组件 ID。QQ 卡片原文用 get_channel_message_content 读取；TG 仅能读取当前或引用消息。
 
         Args:
             message_id(string): 渠道原生消息 ID，不是 AstrBot 本地历史记录 ID。
@@ -272,6 +272,22 @@ class EnishiPlugin(Star):
                 event,
                 await self.awareness.sources.message(event, message_id),
             )
+        except (ChannelError, ValueError) as exc:
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
+    @filter.llm_tool(name="get_channel_message_content")
+    async def get_channel_message_content(
+        self, event: AstrMessageEvent, content_id: str
+    ) -> str:
+        """按非图片组件完整 id 读取 QQ 原文。支持小程序／分享 JSON、XML、Markdown、文件、语音、视频、合并转发等；返回完整原始 data 和卡片链接字段。先从消息或群聊 META 获取组件 id；没有时先 get_channel_message(message_id)。不联网打开链接、不下载媒体。
+
+        Args:
+            content_id(string): Json(id=...)、Xml(id=...) 等非图片组件中的完整 qq:// 定位，不能传图片 ID。
+        """
+        try:
+            self.awareness.require_enabled(event)
+            result = await self.awareness.sources.message_content(event, content_id)
+            return json.dumps(result, ensure_ascii=False)
         except (ChannelError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
 

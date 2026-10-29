@@ -72,6 +72,12 @@ v0.4.2 起，已有历史中带工具图片来源标记的旧转述，以及能�
 
 `/渠道图片模式` 显示当前会话匹配的设置。默认 QQ、TG 的图片管理均关闭。
 
+## 非文本消息与卡片原文
+
+QQ 小程序、网页分享 JSON、XML、Markdown、文件、语音、视频、合并转发等组件，在当前消息 META、群聊流水及消息／历史查询里只保留类型与完整定位，例如 `Json(id="qq://Haqi8mi/332993267/json/1862917194?i=0")`。同类型有多段时按出现次序区分，不建立原文缓存，不自动展开卡片或下载媒体。普通文本中的 URL 保持文字，图片继续使用原有图片 ID 和读图工具。
+
+模型通过 `get_channel_message_content(content_id)` 按需读取完整原生 `data`；JSON 卡片额外列出 app、分类和链接字段位置，XML／Markdown 也提供可识别的链接。没有组件 ID 时先调用 `get_channel_message(message_id)`。工具只读取原文，不打开链接、不推断短链最终地址。开启当前渠道聊天感知后可使用；当前消息引用不依赖图片模式或群聊流水开关。具体格式和 NapCat 源码依据见 [非文本消息](docs/message-content.md)。
+
 ## 图片读取与大小限制
 
 不建立接收时图片索引。图片 ID 包含渠道原生 `file_id`／`image.file`，或原生消息 ID、图片段位置和转发定位。此前未接收过的引用图片，可从引用载荷或 NapCat 按需回取。
@@ -93,6 +99,7 @@ v0.4.2 起，已有历史中带工具图片来源标记的旧转述，以及能�
 | `get_channel_user_avatar(user_id)` | 取得头像原生图片 ID，随后可以转述或取文件 |
 | `get_channel_member_info(user_id)` | 查询当前群成员昵称、名片及角色 |
 | `get_channel_message(message_id)` | QQ 从 NapCat 查询；TG 读取当前载荷中的当前／引用消息 |
+| `get_channel_message_content(content_id)` | 按非图片组件完整 ID 读取 QQ 原始 data、卡片类型与链接字段；合并转发按原生转发 ID 取回 |
 | `get_channel_user_history(user_id, limit, days, before_id)` | 原有历史发言功能：QQ 分页查询 NapCat；TG 查询已有本地群历史并明确覆盖范围 |
 
 图片转述的 `image_ids` 必须是数组，单图也传 `["完整图片ID"]`。建议把有关联的图片批量总结，例如同一人连续发送的多张图、同一事件的照片或连续截图；每组最多 6 张，更多图片分组调用。

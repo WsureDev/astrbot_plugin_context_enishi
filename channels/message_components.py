@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..settings import platform_name
+from .content_refs import CONTENT_TYPES, ContentRef, content_type
 from .native import field, normalize_segments
 
 
@@ -35,11 +37,19 @@ def component(kind, **values):
     }
 
 
-def framework_components(parts):
+def referenced_component(event, kind, mid, index):
+    values = {}
+    if event is not None and mid and platform_name(event) == "qq":
+        values["id"] = ContentRef.for_message(event, kind, mid, index).uri
+    return component(kind.title(), **values)
+
+
+def framework_components(parts, event=None, message_id=""):
     output = []
+    counts = {}
     for part in parts or []:
         value = field(part, "type", "")
-        kind = str(field(value, "value", value)).lower()
+        kind = content_type(field(value, "value", value))
         if kind == "reply":
             output.append(
                 component(
@@ -55,24 +65,22 @@ def framework_components(parts):
                     "At", qq=native_id(field(part, "qq")), name=field(part, "name")
                 )
             )
-        elif kind in {
-            "record",
-            "video",
-            "file",
-            "face",
-            "forward",
-            "nodes",
-            "poke",
-            "json",
-        }:
-            output.append(component(kind.title()))
+        elif kind in CONTENT_TYPES:
+            index = counts.get(kind, 0)
+            output.append(referenced_component(event, kind, message_id, index))
+            counts[kind] = index + 1
     return output
 
 
-def qq_components(payload):
+def qq_components(payload, event=None):
     output = []
+    counts = {}
+    mid = field(payload, "message_id")
     for part in normalize_segments(field(payload, "message", [])):
-        kind, data = field(part, "type"), field(part, "data", {}) or {}
+        kind, data = (
+            content_type(field(part, "type", "")),
+            field(part, "data", {}) or {},
+        )
         if kind == "reply":
             output.append(
                 component(
@@ -88,8 +96,10 @@ def qq_components(payload):
                     "At", qq=native_id(field(data, "qq")), name=field(data, "name")
                 )
             )
-        elif kind in {"record", "video", "file", "face", "forward", "json", "poke"}:
-            output.append(component(kind.title()))
+        elif kind in CONTENT_TYPES:
+            index = counts.get(kind, 0)
+            output.append(referenced_component(event, kind, mid, index))
+            counts[kind] = index + 1
     return output
 
 
@@ -136,7 +146,7 @@ def merge_components(primary, extra):
     output = [dict(part) for part in primary]
     for part in extra:
         kind = part["type"]
-        locator = {"Reply": "id", "At": "qq", "Image": "file"}.get(kind)
+        locator = {"At": "qq", "Image": "file"}.get(kind, "id")
         match = next(
             (
                 known

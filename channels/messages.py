@@ -6,6 +6,7 @@ import math
 from datetime import UTC, datetime
 
 from ..settings import platform_name, scope
+from .content_refs import CONTENT_TYPES
 from .message_components import (
     component,
     framework_components,
@@ -83,7 +84,7 @@ def qq_record(event, payload):
         for part in segments
         if field(part, "type") == "text"
     )
-    parts = qq_components(payload)
+    parts = qq_components(payload, event)
     parts.extend(
         component("Image", file=image.ref.uri)
         for image in qq_images(segments, event, mid or "")
@@ -148,13 +149,25 @@ def event_record(event):
             sender.setdefault("nickname", str(name))
     if not result["timestamp"]:
         result["timestamp"] = unix_time(field(obj, "timestamp"))
-    if not result["message_str"]:
+    has_native_content = platform_name(event) == "qq" and any(
+        str(field(part, "type", "")).lower() in CONTENT_TYPES
+        for part in normalize_segments(field(raw, "message", []))
+    )
+    if not result["message_str"] and not has_native_content:
         text = field(obj, "message_str")
         getter = getattr(event, "get_message_str", None)
         if text is None and callable(getter):
             text = getter()
         result["message_str"] = str(text or "")[:8000]
-    components = framework_components(field(obj, "message", []))
+    components = framework_components(
+        field(obj, "message", []), event, result["message_id"]
+    )
+    if platform_name(event) == "qq" and normalize_segments(field(raw, "message", [])):
+        # Native types/ordinals are authoritative. Framework conversions may
+        # turn a forward segment into Nodes or a Markdown segment into Plain.
+        components = [
+            part for part in components if part["type"].lower() not in CONTENT_TYPES
+        ]
     if platform_name(event) == "telegram" and telegram_payload(event):
         # Native entities distinguish numeric IDs from @usernames, including
         # anonymous chat senders. Framework conversions can lose that distinction.

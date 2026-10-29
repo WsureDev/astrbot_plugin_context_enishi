@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from ..channels.content_reader import qq_message_payload, read_content
 from ..channels.messages import local_record, qq_record, telegram_record, unix_time
 from ..channels.native import ImageRef, field
 from ..channels.transport import ChannelError, ChannelTransport
@@ -62,20 +63,7 @@ class ChatSources(ChannelTransport):
 
     async def message(self, event: Any, message_id: str) -> dict:
         if platform_name(event) == "qq":
-            payload = await self.action(event, "get_msg", message_id=str(message_id))
-            if not isinstance(payload, dict):
-                raise ChannelError("message is unavailable")
-            actual_chat = str(
-                field(payload, "group_id", "") or field(payload, "user_id", "")
-            )
-            if actual_chat and actual_chat != scope(event):
-                raise ChannelError("message belongs to another chat")
-            payload = dict(payload)
-            if payload.get("message_id") is not None and str(
-                payload["message_id"]
-            ) != str(message_id):
-                raise ChannelError("message ID mismatch")
-            payload.setdefault("message_id", str(message_id))
+            payload = await qq_message_payload(self, event, message_id)
             result = self._render_qq_message(event, payload)
             for index, part in enumerate(result["message"]):
                 if (
@@ -101,6 +89,9 @@ class ChatSources(ChannelTransport):
                 "Telegram Bot API cannot fetch arbitrary message IDs; this message is absent from the current payload"
             )
         raise ChannelError("this platform has no message adapter")
+
+    async def message_content(self, event, content_id):
+        return await read_content(self, event, content_id)
 
     async def user_history(
         self, event: Any, user_id: str, limit: int, days: int, before_id: str = ""

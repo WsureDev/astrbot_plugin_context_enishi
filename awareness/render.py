@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ..channels.message_components import component, merge_components
 from ..channels.messages import event_meta, event_record
-from ..channels.meta import CURRENT_FIELDS, rows, table
+from ..channels.meta import CONTENT_READER, CURRENT_FIELDS, rows, table
 
 
 def messages(event, result):
@@ -26,6 +26,12 @@ def messages(event, result):
     records = result.get("messages")
     if records is None:
         records = [result]
+    if any(
+        part.get("id", "").startswith("qq://")
+        for record in records
+        for part in record.get("message", [])
+    ):
+        metadata["read_with"] = CONTENT_READER
     return table(records, metadata)
 
 

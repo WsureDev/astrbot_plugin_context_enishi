@@ -5,6 +5,7 @@ from ..channels.native import field
 from ..identity import caption_data_directory
 from ..observability import Diagnostics
 from ..settings import MODE_DISABLED
+from .components import prepare_component_context
 from .group_flow.service import GroupFlow
 from .media import MediaPolicy
 from .runtime import RunnerIntegration
@@ -18,6 +19,7 @@ class ContextOrganizer:
         self.context, self.settings, self.participates = context, settings, participates
         self.diagnostics = Diagnostics(settings.config)
         self.cache = self.channels = self.policy = None
+        self.text_factory = None
         self.integration = RunnerIntegration(self)
         self.flow = GroupFlow(self)
 
@@ -34,6 +36,7 @@ class ContextOrganizer:
     async def initialize(
         self, data, temporary, text_factory, runner_class, executor_class
     ):
+        self.text_factory = text_factory
         self.cache = CaptionCache(caption_data_directory(data))
         self.channels = MediaSources(self.context, self.settings, [temporary])
         self.policy = MediaPolicy(
@@ -58,6 +61,12 @@ class ContextOrganizer:
             raise
 
     async def prepare_request(self, event, request):
+        if (
+            self.participates(event)
+            and self.text_factory is not None
+            and self.settings.awareness_for_event(event).enabled
+        ):
+            prepare_component_context(event, request, self.text_factory)
         if self.enabled_event(event):
             await self.policy.prepare_request(event, request)
 

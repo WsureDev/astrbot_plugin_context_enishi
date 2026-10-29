@@ -115,6 +115,7 @@ async def test_entrypoint_disabled_awareness_tools_do_not_query_backend(
         plugin.get_channel_member_info(service.event),
         plugin.get_channel_user_avatar(service.event),
         plugin.get_channel_message(service.event, "1"),
+        plugin.get_channel_message_content(service.event, "qq://bot/123/json/1?i=0"),
         plugin.get_channel_user_history(service.event),
     ):
         assert json.loads(await call)["ok"] is False
